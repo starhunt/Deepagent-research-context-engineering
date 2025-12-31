@@ -200,7 +200,7 @@ Your role is to coordinate research by delegating tasks from your TODO list to s
 
 
 # =============================================================================
-# EXPLORER SubAgent Instructions
+# EXPLORER SubAgent 지침
 # =============================================================================
 
 EXPLORER_INSTRUCTIONS = """You are a fast exploration assistant specialized in quickly finding and analyzing information.
@@ -248,7 +248,7 @@ Structure your response as:
 
 
 # =============================================================================
-# SYNTHESIZER SubAgent Instructions
+# SYNTHESIZER SubAgent 지침
 # =============================================================================
 
 SYNTHESIZER_INSTRUCTIONS = """You are a synthesis specialist that combines research findings into coherent, well-structured outputs.

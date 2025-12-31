@@ -1,26 +1,26 @@
-"""Skill loader for parsing and loading agent skills from SKILL.md files.
+"""SKILL.md 파일에서 에이전트 스킬을 파싱하고 로드하는 스킬 로더.
 
-This module implements the Anthropic Agent Skills pattern via YAML frontmatter parsing.
-Each skill is a directory containing a SKILL.md file with:
-- YAML frontmatter (name, description required)
-- Markdown instructions for the agent
-- Optional supporting files (scripts, configs, etc.)
+이 모듈은 YAML 프론트매터 파싱을 통해 Anthropic Agent Skills 패턴을 구현한다.
+각 스킬은 다음을 포함하는 SKILL.md 파일이 있는 디렉토리이다:
+- YAML 프론트매터 (name, description 필수)
+- 에이전트용 마크다운 지침
+- 선택적 지원 파일 (스크립트, 설정 등)
 
-Example SKILL.md structure:
+SKILL.md 구조 예시:
 ```markdown
 ---
 name: web-research
-description: A structured approach to conducting thorough web research
+description: 철저한 웹 리서치를 수행하기 위한 구조화된 접근법
 ---
 
-# Web Research Skill
+# 웹 리서치 스킬
 
-## When to Use
-- When the user requests topic research
+## 사용 시점
+- 사용자가 주제 연구를 요청할 때
 ...
 ```
 
-Adapted from deepagents-cli for use in research_agent project.
+research_agent 프로젝트용으로 deepagents-cli에서 적응함.
 """
 
 from __future__ import annotations
@@ -34,56 +34,56 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Maximum file size for SKILL.md files (10MB) - DoS protection
+# SKILL.md 파일 최대 크기 (10MB) - DoS 방지
 MAX_SKILL_FILE_SIZE = 10 * 1024 * 1024
 
-# Agent Skills specification constraints (https://agentskills.io/specification)
+# Agent Skills 명세 제약 조건 (https://agentskills.io/specification)
 MAX_SKILL_NAME_LENGTH = 64
 MAX_SKILL_DESCRIPTION_LENGTH = 1024
 
 
 class SkillMetadata(TypedDict):
-    """Skill metadata following Agent Skills specification."""
+    """Agent Skills 명세를 따르는 스킬 메타데이터."""
 
     name: str
-    """Skill name (max 64 chars, lowercase alphanumeric and hyphens)."""
+    """스킬 이름 (최대 64자, 소문자 영숫자와 하이픈만)."""
 
     description: str
-    """Description of what the skill does (max 1024 chars)."""
+    """스킬이 하는 일에 대한 설명 (최대 1024자)."""
 
     path: str
-    """Path to the SKILL.md file."""
+    """SKILL.md 파일 경로."""
 
     source: str
-    """Source of the skill ('user' or 'project')."""
+    """스킬 출처 ('user' 또는 'project')."""
 
-    # Optional fields per Agent Skills specification
+    # Agent Skills 명세에 따른 선택적 필드
     license: NotRequired[str | None]
-    """License name or reference to bundled license file."""
+    """라이선스 이름 또는 번들된 라이선스 파일 참조."""
 
     compatibility: NotRequired[str | None]
-    """Environment requirements (max 500 chars)."""
+    """환경 요구사항 (최대 500자)."""
 
     metadata: NotRequired[dict[str, str] | None]
-    """Arbitrary key-value mapping for additional metadata."""
+    """추가 메타데이터용 임의 키-값 매핑."""
 
     allowed_tools: NotRequired[str | None]
-    """Space-separated list of pre-approved tools."""
+    """사전 승인된 도구의 공백 구분 목록."""
 
 
 def _is_safe_path(path: Path, base_dir: Path) -> bool:
-    """Check if path is safely contained within base_dir.
+    """경로가 base_dir 내에 안전하게 포함되어 있는지 확인한다.
 
-    Prevents directory traversal attacks via symlinks or path manipulation.
-    Resolves both paths to canonical form (following symlinks) and verifies
-    the target path is within the base directory.
+    심볼릭 링크나 경로 조작을 통한 디렉토리 탐색 공격을 방지한다.
+    두 경로 모두 정규 형식으로 변환(심볼릭 링크 따라감)하고
+    대상 경로가 기본 디렉토리 내에 있는지 확인한다.
 
     Args:
-        path: Path to validate
-        base_dir: Base directory that should contain the path
+        path: 검증할 경로
+        base_dir: 경로가 포함되어야 하는 기본 디렉토리
 
     Returns:
-        True if path is safely within base_dir, False otherwise
+        경로가 base_dir 내에 안전하게 있으면 True, 그렇지 않으면 False
     """
     try:
         resolved_path = path.resolve()
@@ -91,113 +91,116 @@ def _is_safe_path(path: Path, base_dir: Path) -> bool:
         resolved_path.relative_to(resolved_base)
         return True
     except ValueError:
-        # Path is not a subdirectory of base_dir
+        # 경로가 base_dir의 하위 디렉토리가 아님
         return False
     except (OSError, RuntimeError):
-        # Error resolving path (e.g., circular symlinks)
+        # 경로 해석 오류 (예: 순환 심볼릭 링크)
         return False
 
 
 def _validate_skill_name(name: str, directory_name: str) -> tuple[bool, str]:
-    """Validate skill name per Agent Skills specification.
+    """Agent Skills 명세에 따라 스킬 이름을 검증한다.
 
-    Requirements:
-    - Max 64 characters
-    - Lowercase alphanumeric and hyphens only (a-z, 0-9, -)
-    - Cannot start or end with hyphen
-    - No consecutive hyphens
-    - Must match parent directory name
+    요구사항:
+    - 최대 64자
+    - 소문자 영숫자와 하이픈만 (a-z, 0-9, -)
+    - 하이픈으로 시작하거나 끝날 수 없음
+    - 연속 하이픈 없음
+    - 부모 디렉토리 이름과 일치해야 함
 
     Args:
-        name: Skill name from YAML frontmatter
-        directory_name: Parent directory name
+        name: YAML 프론트매터의 스킬 이름
+        directory_name: 부모 디렉토리 이름
 
     Returns:
-        (is_valid, error_message) tuple. Error message is empty if valid.
+        (is_valid, error_message) 튜플. 유효하면 에러 메시지는 빈 문자열.
     """
     if not name:
-        return False, "Name is required"
+        return False, "이름은 필수입니다"
     if len(name) > MAX_SKILL_NAME_LENGTH:
-        return False, "Name exceeds 64 characters"
-    # Pattern: lowercase alphanumeric, single hyphens between segments
+        return False, "이름이 64자를 초과합니다"
+    # 패턴: 소문자 영숫자, 세그먼트 사이에 단일 하이픈
     if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name):
-        return False, "Name must use only lowercase alphanumeric and single hyphens"
+        return False, "이름은 소문자 영숫자와 단일 하이픈만 사용해야 합니다"
     if name != directory_name:
-        return False, f"Name '{name}' must match directory name '{directory_name}'"
+        return (
+            False,
+            f"이름 '{name}'은 디렉토리 이름 '{directory_name}'과 일치해야 합니다",
+        )
     return True, ""
 
 
 def _parse_skill_metadata(skill_md_path: Path, source: str) -> SkillMetadata | None:
-    """Parse YAML frontmatter from SKILL.md file per Agent Skills specification.
+    """Agent Skills 명세에 따라 SKILL.md 파일에서 YAML 프론트매터를 파싱한다.
 
     Args:
-        skill_md_path: Path to SKILL.md file
-        source: Skill source ('user' or 'project')
+        skill_md_path: SKILL.md 파일 경로
+        source: 스킬 출처 ('user' 또는 'project')
 
     Returns:
-        SkillMetadata with all fields, or None if parsing fails
+        모든 필드가 있는 SkillMetadata, 파싱 실패 시 None
     """
     try:
-        # Security: Check file size to prevent DoS
+        # 보안: DoS 방지를 위한 파일 크기 확인
         file_size = skill_md_path.stat().st_size
         if file_size > MAX_SKILL_FILE_SIZE:
             logger.warning(
-                "Skipping %s: file too large (%d bytes)", skill_md_path, file_size
+                "%s 건너뜀: 파일이 너무 큼 (%d 바이트)", skill_md_path, file_size
             )
             return None
 
         content = skill_md_path.read_text(encoding="utf-8")
 
-        # Match YAML frontmatter between --- delimiters
+        # --- 구분자 사이의 YAML 프론트매터 매칭
         frontmatter_pattern = r"^---\s*\n(.*?)\n---\s*\n"
         match = re.match(frontmatter_pattern, content, re.DOTALL)
 
         if not match:
             logger.warning(
-                "Skipping %s: no valid YAML frontmatter found", skill_md_path
+                "%s 건너뜀: 유효한 YAML 프론트매터를 찾을 수 없음", skill_md_path
             )
             return None
 
         frontmatter_str = match.group(1)
 
-        # Parse YAML with safe_load for proper nested structure support
+        # 적절한 중첩 구조 지원을 위해 safe_load로 YAML 파싱
         try:
             frontmatter_data = yaml.safe_load(frontmatter_str)
         except yaml.YAMLError as e:
-            logger.warning("Invalid YAML in %s: %s", skill_md_path, e)
+            logger.warning("%s의 YAML이 유효하지 않음: %s", skill_md_path, e)
             return None
 
         if not isinstance(frontmatter_data, dict):
-            logger.warning("Skipping %s: frontmatter is not a mapping", skill_md_path)
+            logger.warning("%s 건너뜀: 프론트매터가 매핑이 아님", skill_md_path)
             return None
 
-        # Validate required fields
+        # 필수 필드 검증
         name = frontmatter_data.get("name")
         description = frontmatter_data.get("description")
 
         if not name or not description:
             logger.warning(
-                "Skipping %s: missing required 'name' or 'description'", skill_md_path
+                "%s 건너뜀: 필수 'name' 또는 'description' 누락", skill_md_path
             )
             return None
 
-        # Validate name format per spec (warn but load for backward compatibility)
+        # 명세에 따른 이름 형식 검증 (역호환성을 위해 경고하지만 로드)
         directory_name = skill_md_path.parent.name
         is_valid, error = _validate_skill_name(str(name), directory_name)
         if not is_valid:
             logger.warning(
-                "Skill '%s' in %s does not follow Agent Skills spec: %s. "
-                "Consider renaming for spec compliance.",
+                "'%s' 스킬 (%s)이 Agent Skills 명세를 따르지 않음: %s. "
+                "명세 준수를 위해 이름 변경을 고려하세요.",
                 name,
                 skill_md_path,
                 error,
             )
 
-        # Validate description length (spec: max 1024 chars)
+        # 설명 길이 검증 (명세: 최대 1024자)
         description_str = str(description)
         if len(description_str) > MAX_SKILL_DESCRIPTION_LENGTH:
             logger.warning(
-                "Description in %s exceeds %d chars, truncating",
+                "%s의 설명이 %d자를 초과하여 잘림",
                 skill_md_path,
                 MAX_SKILL_DESCRIPTION_LENGTH,
             )
@@ -215,35 +218,35 @@ def _parse_skill_metadata(skill_md_path: Path, source: str) -> SkillMetadata | N
         )
 
     except (OSError, UnicodeDecodeError) as e:
-        logger.warning("Error reading %s: %s", skill_md_path, e)
+        logger.warning("%s 읽기 오류: %s", skill_md_path, e)
         return None
 
 
 def _list_skills_from_dir(skills_dir: Path, source: str) -> list[SkillMetadata]:
-    """List all skills from a single skills directory (internal helper).
+    """단일 스킬 디렉토리에서 모든 스킬을 나열한다 (내부 헬퍼).
 
-    Scans the skills directory for subdirectories containing SKILL.md files,
-    parses YAML frontmatter, and returns skill metadata.
+    스킬 디렉토리를 스캔하여 SKILL.md 파일을 포함하는 하위 디렉토리를 찾고,
+    YAML 프론트매터를 파싱하여 스킬 메타데이터를 반환한다.
 
-    Skills organization:
+    스킬 구조:
     skills/
     ├── skill-name/
-    │   ├── SKILL.md        # Required: instructions with YAML frontmatter
-    │   ├── script.py       # Optional: supporting files
-    │   └── config.json     # Optional: supporting files
+    │   ├── SKILL.md        # 필수: YAML 프론트매터가 있는 지침
+    │   ├── script.py       # 선택: 지원 파일
+    │   └── config.json     # 선택: 지원 파일
 
     Args:
-        skills_dir: Path to skills directory
-        source: Skill source ('user' or 'project')
+        skills_dir: 스킬 디렉토리 경로
+        source: 스킬 출처 ('user' 또는 'project')
 
     Returns:
-        List of skill metadata dictionaries with name, description, path, and source
+        name, description, path, source가 있는 스킬 메타데이터 딕셔너리 목록
     """
     skills_dir = skills_dir.expanduser()
     if not skills_dir.exists():
         return []
 
-    # Resolve base directory for security checks
+    # 보안 검사를 위한 기본 디렉토리 해석
     try:
         resolved_base = skills_dir.resolve()
     except (OSError, RuntimeError):
@@ -251,25 +254,25 @@ def _list_skills_from_dir(skills_dir: Path, source: str) -> list[SkillMetadata]:
 
     skills: list[SkillMetadata] = []
 
-    # Iterate over subdirectories
+    # 하위 디렉토리 순회
     for skill_dir in skills_dir.iterdir():
-        # Security: catch symlinks pointing outside skills directory
+        # 보안: 스킬 디렉토리 외부를 가리키는 심볼릭 링크 포착
         if not _is_safe_path(skill_dir, resolved_base):
             continue
 
         if not skill_dir.is_dir():
             continue
 
-        # Look for SKILL.md file
+        # SKILL.md 파일 찾기
         skill_md_path = skill_dir / "SKILL.md"
         if not skill_md_path.exists():
             continue
 
-        # Security: validate SKILL.md path before reading
+        # 보안: 읽기 전에 SKILL.md 경로 검증
         if not _is_safe_path(skill_md_path, resolved_base):
             continue
 
-        # Parse metadata
+        # 메타데이터 파싱
         metadata = _parse_skill_metadata(skill_md_path, source=source)
         if metadata:
             skills.append(metadata)
@@ -282,32 +285,32 @@ def list_skills(
     user_skills_dir: Path | None = None,
     project_skills_dir: Path | None = None,
 ) -> list[SkillMetadata]:
-    """List skills from user and/or project directories.
+    """사용자 및/또는 프로젝트 디렉토리에서 스킬을 나열한다.
 
-    When both directories are provided, project skills with the same name
-    as user skills will override the user skills.
+    두 디렉토리가 모두 제공되면, 사용자 스킬과 동일한 이름의 프로젝트 스킬이
+    사용자 스킬을 오버라이드한다.
 
     Args:
-        user_skills_dir: Path to user-level skills directory
-        project_skills_dir: Path to project-level skills directory
+        user_skills_dir: 사용자 레벨 스킬 디렉토리 경로
+        project_skills_dir: 프로젝트 레벨 스킬 디렉토리 경로
 
     Returns:
-        Merged list of skill metadata from both sources, with project skills
-        taking precedence over user skills when names conflict
+        두 출처의 스킬 메타데이터를 병합한 목록.
+        이름이 충돌할 때 프로젝트 스킬이 우선됨
     """
     all_skills: dict[str, SkillMetadata] = {}
 
-    # Load user skills first (baseline)
+    # 사용자 스킬을 먼저 로드 (기본)
     if user_skills_dir:
         user_skills = _list_skills_from_dir(user_skills_dir, source="user")
         for skill in user_skills:
             all_skills[skill["name"]] = skill
 
-    # Load project skills second (override/extend)
+    # 프로젝트 스킬을 두 번째로 로드 (오버라이드/확장)
     if project_skills_dir:
         project_skills = _list_skills_from_dir(project_skills_dir, source="project")
         for skill in project_skills:
-            # Project skills override user skills with same name
+            # 프로젝트 스킬이 같은 이름의 사용자 스킬을 오버라이드
             all_skills[skill["name"]] = skill
 
     return list(all_skills.values())

@@ -1,22 +1,22 @@
-"""SubAgent Registry for managing specialized agent types.
+"""전문화된 에이전트 타입 관리를 위한 SubAgent 레지스트리.
 
-This module provides a registry pattern inspired by Claude Code's subagent_type system,
-allowing dynamic registration and lookup of SubAgent specifications.
+이 모듈은 Claude Code의 subagent_type 시스템에서 영감을 받은 레지스트리 패턴을 제공하며,
+SubAgent 명세의 동적 등록과 조회를 허용한다.
 
-The registry supports:
-- Type-based agent lookup (by name)
-- Capability-based filtering (by tags)
-- Runtime agent discovery
+레지스트리 지원 기능:
+- 타입 기반 에이전트 조회 (이름으로)
+- 능력 기반 필터링 (태그로)
+- 런타임 에이전트 발견
 
 Example:
     registry = SubAgentRegistry()
     registry.register(RESEARCHER_AGENT)
     registry.register(EXPLORER_AGENT)
 
-    # Get specific agent
+    # 특정 에이전트 가져오기
     researcher = registry.get("researcher")
 
-    # Get all agents with "research" capability
+    # "research" 능력을 가진 모든 에이전트 가져오기
     research_agents = registry.get_by_capability("research")
 """
 
@@ -26,43 +26,43 @@ from typing_extensions import NotRequired
 
 
 class SubAgentSpec(TypedDict):
-    """Specification for a SubAgent.
+    """SubAgent 명세.
 
-    This follows the DeepAgents SubAgent TypedDict pattern with additional
-    fields for capability-based routing.
+    DeepAgents SubAgent TypedDict 패턴을 따르며
+    능력 기반 라우팅을 위한 추가 필드를 포함한다.
     """
 
     name: str
-    """Unique identifier for the SubAgent (used as subagent_type)."""
+    """SubAgent의 고유 식별자 (subagent_type으로 사용)."""
 
     description: str
-    """Description shown to main agent for delegation decisions."""
+    """위임 결정을 위해 메인 에이전트에게 표시되는 설명."""
 
     system_prompt: str
-    """System prompt defining SubAgent behavior."""
+    """SubAgent 동작을 정의하는 시스템 프롬프트."""
 
     tools: list[Any]
-    """Tools available to this SubAgent."""
+    """이 SubAgent에서 사용 가능한 도구."""
 
     model: NotRequired[str]
-    """Optional model override (defaults to parent's model)."""
+    """선택적 모델 오버라이드 (기본값은 부모의 모델)."""
 
     capabilities: NotRequired[list[str]]
-    """Capability tags for filtering (e.g., ['research', 'web'])."""
+    """필터링용 능력 태그 (예: ['research', 'web'])."""
 
 
 class SubAgentRegistry:
-    """Registry for managing SubAgent specifications.
+    """SubAgent 명세 관리를 위한 레지스트리.
 
-    This class provides Claude Code-style SubAgent management with:
-    - Registration and deregistration of agents
-    - Name-based lookup (subagent_type matching)
-    - Capability-based filtering
+    이 클래스는 Claude Code 스타일의 SubAgent 관리를 제공한다:
+    - 에이전트 등록 및 등록 해제
+    - 이름 기반 조회 (subagent_type 매칭)
+    - 능력 기반 필터링
 
     Example:
         registry = SubAgentRegistry()
 
-        # Register agents
+        # 에이전트 등록
         registry.register({
             "name": "researcher",
             "description": "Deep web research",
@@ -71,81 +71,81 @@ class SubAgentRegistry:
             "capabilities": ["research", "web"],
         })
 
-        # Lookup by name
+        # 이름으로 조회
         agent = registry.get("researcher")
 
-        # Filter by capability
+        # 능력으로 필터링
         web_agents = registry.get_by_capability("web")
     """
 
     def __init__(self) -> None:
-        """Initialize empty registry."""
+        """빈 레지스트리를 초기화한다."""
         self._agents: dict[str, SubAgentSpec] = {}
 
     def register(self, agent_spec: SubAgentSpec) -> None:
-        """Register a SubAgent specification.
+        """SubAgent 명세를 등록한다.
 
         Args:
-            agent_spec: SubAgent specification dictionary.
+            agent_spec: SubAgent 명세 딕셔너리.
 
         Raises:
-            ValueError: If agent with same name already registered.
+            ValueError: 같은 이름의 에이전트가 이미 등록된 경우.
         """
         name = agent_spec["name"]
         if name in self._agents:
-            msg = f"SubAgent '{name}' is already registered"
+            msg = f"SubAgent '{name}'은(는) 이미 등록되어 있습니다"
             raise ValueError(msg)
         self._agents[name] = agent_spec
 
     def unregister(self, name: str) -> None:
-        """Remove a SubAgent from the registry.
+        """레지스트리에서 SubAgent를 제거한다.
 
         Args:
-            name: Name of the SubAgent to remove.
+            name: 제거할 SubAgent 이름.
 
         Raises:
-            KeyError: If agent not found.
+            KeyError: 에이전트를 찾을 수 없는 경우.
         """
         if name not in self._agents:
-            msg = f"SubAgent '{name}' not found in registry"
+            msg = f"SubAgent '{name}'을(를) 레지스트리에서 찾을 수 없습니다"
             raise KeyError(msg)
         del self._agents[name]
 
     def get(self, name: str) -> SubAgentSpec | None:
-        """Get a SubAgent specification by name.
+        """이름으로 SubAgent 명세를 가져온다.
 
         Args:
-            name: SubAgent name (subagent_type).
+            name: SubAgent 이름 (subagent_type).
 
         Returns:
-            SubAgent specification if found, None otherwise.
+            찾으면 SubAgent 명세, 그렇지 않으면 None.
         """
         return self._agents.get(name)
 
     def list_all(self) -> list[SubAgentSpec]:
-        """List all registered SubAgent specifications.
+        """등록된 모든 SubAgent 명세를 나열한다.
 
         Returns:
-            List of all SubAgent specs.
+            모든 SubAgent 명세 목록.
         """
         return list(self._agents.values())
 
     def list_names(self) -> list[str]:
-        """List all registered SubAgent names.
+        """등록된 모든 SubAgent 이름을 나열한다.
 
         Returns:
-            List of SubAgent names.
+            SubAgent 이름 목록.
         """
         return list(self._agents.keys())
 
     def get_by_capability(self, capability: str) -> list[SubAgentSpec]:
-        """Get SubAgents that have a specific capability.
+        """특정 능력을 가진 SubAgent를 가져온다.
 
         Args:
-            capability: Capability tag to filter by.
+            capability: 필터링할 능력 태그.
 
         Returns:
-            List of SubAgents with the specified capability.
+            지정된 능력을 가진 SubAgent 목록.
         """
         return [
             agent
@@ -154,26 +154,26 @@ class SubAgentRegistry:
         ]
 
     def get_descriptions(self) -> dict[str, str]:
-        """Get a mapping of agent names to descriptions.
+        """에이전트 이름과 설명의 매핑을 가져온다.
 
-        Useful for displaying available agents to the main orchestrator.
+        메인 오케스트레이터에 사용 가능한 에이전트를 표시할 때 유용하다.
 
         Returns:
-            Dictionary mapping agent names to their descriptions.
+            에이전트 이름을 설명에 매핑하는 딕셔너리.
         """
         return {name: agent["description"] for name, agent in self._agents.items()}
 
     def __contains__(self, name: str) -> bool:
-        """Check if a SubAgent is registered.
+        """SubAgent가 등록되어 있는지 확인한다.
 
         Args:
-            name: SubAgent name to check.
+            name: 확인할 SubAgent 이름.
 
         Returns:
-            True if agent is registered.
+            에이전트가 등록되어 있으면 True.
         """
         return name in self._agents
 
     def __len__(self) -> int:
-        """Get number of registered SubAgents."""
+        """등록된 SubAgent 수를 반환한다."""
         return len(self._agents)

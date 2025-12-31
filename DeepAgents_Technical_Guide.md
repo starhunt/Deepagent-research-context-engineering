@@ -219,9 +219,9 @@ graph LR
 
 | Backend | 저장 위치 | 수명 | files_update 반환 | 사용 시나리오 |
 |---------|----------|------|------------------|--------------|
-| **StateBackend** | LangGraph State | 대화 스레드 | ✅ (상태 업데이트용) | 임시 작업 파일 |
-| **FilesystemBackend** | 로컬 디스크 | 영구 | ❌ (이미 저장됨) | 실제 파일 조작 |
-| **StoreBackend** | LangGraph Store | 스레드 간 영구 | ❌ (이미 저장됨) | 장기 메모리 |
+| **StateBackend** | LangGraph State | 대화 스레드 | (상태 업데이트용) | 임시 작업 파일 |
+| **FilesystemBackend** | 로컬 디스크 | 영구 | (이미 저장됨) | 실제 파일 조작 |
+| **StoreBackend** | LangGraph Store | 스레드 간 영구 | (이미 저장됨) | 장기 메모리 |
 | **CompositeBackend** | 라우팅 | 백엔드별 상이 | 백엔드별 상이 | 하이브리드 |
 
 ### 3.3 StateBackend 상세
@@ -278,7 +278,7 @@ class FilesystemBackend(BackendProtocol):
 - Path traversal 차단: `..`, `~` 패턴 거부
 
 **검색 최적화**:
-- 1차: Ripgrep (`rg`) JSON 출력 사용
+- 1차: ripgrep (`rg`) JSON 출력 사용
 - 2차: Python 폴백 (Ripgrep 미설치 시)
 
 ### 3.5 CompositeBackend 상세

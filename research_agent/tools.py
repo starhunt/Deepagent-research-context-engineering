@@ -47,17 +47,17 @@ def tavily_search(
         Literal["general", "news", "finance"], InjectedToolArg
     ] = "general",
 ) -> str:
-    """Search the web for information on a given query.
+    """주어진 쿼리로 웹을 검색한다.
 
-    Uses Tavily to discover relevant URLs, then fetches and returns full webpage content as markdown.
+    Tavily를 사용해 관련 URL을 찾고, 전체 웹페이지 콘텐츠를 마크다운으로 가져와 반환한다.
 
     Args:
-        query: Search query to execute
-        max_results: Maximum number of results to return (default: 1)
-        topic: Topic filter - 'general', 'news', or 'finance' (default: 'general')
+        query: 실행할 검색 쿼리
+        max_results: 반환할 최대 결과 수 (기본값: 1)
+        topic: 주제 필터 - 'general', 'news', 또는 'finance' (기본값: 'general')
 
     Returns:
-        Formatted search results with full webpage content
+        전체 웹페이지 콘텐츠가 포함된 포맷팅된 검색 결과
     """
     # Tavily 를 사용해 관련 URL 목록을 조회한다
     search_results = tavily_client.search(
@@ -94,27 +94,27 @@ def tavily_search(
 
 @tool()
 def think_tool(reflection: str) -> str:
-    """Tool for strategic reflection on research progress and decision-making.
+    """연구 진행 상황과 의사결정을 위한 전략적 성찰 도구.
 
-    Use this tool after each search to analyze results and plan next steps systematically.
-    This creates a deliberate pause in the research workflow for quality decision-making.
+    각 검색 후 결과를 분석하고 다음 단계를 체계적으로 계획하기 위해 이 도구를 사용한다.
+    이는 품질 높은 의사결정을 위해 연구 워크플로우에 의도적인 멈춤을 만든다.
 
-    When to use:
-    - After receiving search results: What key information did I find?
-    - Before deciding next steps: Do I have enough to answer comprehensively?
-    - When assessing research gaps: What specific information am I still missing?
-    - Before concluding research: Can I provide a complete answer now?
+    사용 시점:
+    - 검색 결과를 받은 후: 어떤 핵심 정보를 찾았는가?
+    - 다음 단계를 결정하기 전: 포괄적으로 답변할 수 있을 만큼 충분한가?
+    - 연구 공백을 평가할 때: 아직 누락된 구체적인 정보는 무엇인가?
+    - 연구를 마무리하기 전: 지금 완전한 답변을 제공할 수 있는가?
 
-    Reflection should address:
-    1. Analysis of current findings - What concrete information have I gathered?
-    2. Gap assessment - What crucial information is still missing?
-    3. Quality evaluation - Do I have sufficient evidence/examples for a good answer?
-    4. Strategic decision - Should I continue searching or provide my answer?
+    성찰에 포함해야 할 내용:
+    1. 현재 발견의 분석 - 어떤 구체적인 정보를 수집했는가?
+    2. 공백 평가 - 어떤 중요한 정보가 아직 누락되어 있는가?
+    3. 품질 평가 - 좋은 답변을 위한 충분한 증거/예시가 있는가?
+    4. 전략적 결정 - 검색을 계속해야 하는가, 답변을 제공해야 하는가?
 
     Args:
-        reflection: Your detailed reflection on research progress, findings, gaps, and next steps
+        reflection: 연구 진행 상황, 발견, 공백, 다음 단계에 대한 상세한 성찰
 
     Returns:
-        Confirmation that reflection was recorded for decision-making
+        의사결정을 위해 성찰이 기록되었다는 확인
     """
-    return f"Reflection recorded: {reflection}"
+    return f"성찰 기록됨: {reflection}"

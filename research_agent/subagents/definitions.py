@@ -1,17 +1,17 @@
-"""SubAgent definitions for research_agent.
+"""research_agent용 SubAgent 정의.
 
-This module defines specialized SubAgent specifications following the
-Claude Code subagent_type pattern. Each SubAgent has:
-- Unique name (used as subagent_type)
-- Clear description for delegation decisions
-- Specialized system prompt
-- Curated tool set
-- Optional model override
+이 모듈은 Claude Code subagent_type 패턴을 따르는
+전문화된 SubAgent 명세를 정의한다. 각 SubAgent는:
+- 고유 이름 (subagent_type으로 사용)
+- 위임 결정을 위한 명확한 설명
+- 전문화된 시스템 프롬프트
+- 엄선된 도구 세트
+- 선택적 모델 오버라이드
 
-SubAgent Types:
-    researcher: Deep web research with reflection
-    explorer: Fast read-only codebase/document exploration
-    synthesizer: Research synthesis and report generation
+SubAgent 타입:
+    researcher: 반성을 포함한 심층 웹 연구
+    explorer: 빠른 읽기 전용 코드베이스/문서 탐색
+    synthesizer: 연구 통합 및 보고서 생성
 """
 
 from datetime import datetime
@@ -22,7 +22,7 @@ from research_agent.prompts import (
     SYNTHESIZER_INSTRUCTIONS,
 )
 
-# Current date for dynamic prompts
+# 동적 프롬프트용 현재 날짜
 _current_date = datetime.now().strftime("%Y-%m-%d")
 
 
@@ -34,7 +34,7 @@ EXPLORER_AGENT = {
     "name": "explorer",
     "description": "Fast read-only exploration of codebases and documents. Use for finding files, searching patterns, and quick information retrieval. Cannot modify files.",
     "system_prompt": EXPLORER_INSTRUCTIONS,
-    "tools": [],  # Will be populated with read-only tools at runtime
+    "tools": [],  # 런타임에 읽기 전용 도구로 채워짐
     "capabilities": ["explore", "search", "read"],
 }
 
@@ -47,7 +47,7 @@ RESEARCHER_AGENT = {
     "name": "researcher",
     "description": "Deep web research with reflection. Use for comprehensive topic research, gathering sources, and in-depth analysis. Includes tavily_search and think_tool.",
     "system_prompt": RESEARCHER_INSTRUCTIONS.format(date=_current_date),
-    "tools": [],  # Will be populated with tavily_search, think_tool at runtime
+    "tools": [],  # 런타임에 tavily_search, think_tool로 채워짐
     "capabilities": ["research", "web", "analysis"],
 }
 
@@ -60,25 +60,25 @@ SYNTHESIZER_AGENT = {
     "name": "synthesizer",
     "description": "Synthesize multiple research findings into coherent reports. Use for combining sub-agent results, creating summaries, and writing final reports.",
     "system_prompt": SYNTHESIZER_INSTRUCTIONS,
-    "tools": [],  # Will be populated with read_file, write_file, think_tool at runtime
+    "tools": [],  # 런타임에 read_file, write_file, think_tool로 채워짐
     "capabilities": ["synthesize", "write", "analysis"],
 }
 
 
 # =============================================================================
-# Utility Functions
+# 유틸리티 함수
 # =============================================================================
 
 
 def get_all_subagents() -> list[dict]:
-    """Get all SubAgent definitions as a list.
+    """모든 SubAgent 정의를 목록으로 반환한다.
 
     Returns:
-        List of SubAgent specification dictionaries.
+        SubAgent 명세 딕셔너리 목록.
 
     Note:
-        Tools are empty and should be populated at agent creation time
-        based on available tools in the runtime.
+        도구는 비어 있으며 런타임에서 사용 가능한 도구를 기반으로
+        에이전트 생성 시 채워져야 한다.
     """
     return [
         RESEARCHER_AGENT,
@@ -88,13 +88,13 @@ def get_all_subagents() -> list[dict]:
 
 
 def get_subagent_by_name(name: str) -> dict | None:
-    """Get a specific SubAgent definition by name.
+    """이름으로 특정 SubAgent 정의를 가져온다.
 
     Args:
-        name: SubAgent name (e.g., "researcher", "explorer", "synthesizer")
+        name: SubAgent 이름 (예: "researcher", "explorer", "synthesizer")
 
     Returns:
-        SubAgent specification dict if found, None otherwise.
+        찾으면 SubAgent 명세 딕셔너리, 그렇지 않으면 None.
     """
     agents = {
         "researcher": RESEARCHER_AGENT,
@@ -105,10 +105,10 @@ def get_subagent_by_name(name: str) -> dict | None:
 
 
 def get_subagent_descriptions() -> str:
-    """Get formatted descriptions of all SubAgents.
+    """모든 SubAgent의 포맷된 설명을 가져온다.
 
     Returns:
-        Formatted string listing all SubAgents and their descriptions.
+        모든 SubAgent와 설명을 나열한 포맷된 문자열.
     """
     descriptions = []
     for agent in get_all_subagents():

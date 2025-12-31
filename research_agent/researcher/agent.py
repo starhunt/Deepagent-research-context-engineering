@@ -20,40 +20,40 @@ def create_researcher_agent(
     model: str | BaseChatModel | None = None,
     backend: BackendProtocol | BackendFactory | None = None,
 ) -> CompiledStateGraph:
-    """Create an autonomous researcher DeepAgent.
+    """자율적 연구 DeepAgent를 생성한다.
 
-    This agent has its own:
-    - Planning loop (write_todos via TodoListMiddleware)
-    - Research loop (tavily_search + think_tool)
-    - Context management (SummarizationMiddleware)
-    - File access (FilesystemMiddleware) for intermediate results
+    이 에이전트는 다음 기능을 자체적으로 보유한다:
+    - 계획 루프 (TodoListMiddleware를 통한 write_todos)
+    - 연구 루프 (tavily_search + think_tool)
+    - 컨텍스트 관리 (SummarizationMiddleware)
+    - 중간 결과 저장을 위한 파일 접근 (FilesystemMiddleware)
 
-    Essentially a "research SubGraph" that operates autonomously.
+    본질적으로 자율적으로 작동하는 "연구 SubGraph"이다.
 
     Args:
-        model: LLM to use. Defaults to gpt-4.1 with temperature=0.
-        backend: Backend for file operations. If provided,
-                 researcher can save intermediate results to filesystem.
+        model: 사용할 LLM. 기본값은 temperature=0인 gpt-4.1.
+        backend: 파일 작업용 백엔드. 제공되면
+                 연구자가 중간 결과를 파일시스템에 저장할 수 있다.
 
     Returns:
-        CompiledStateGraph: A fully autonomous research agent that can be
-        used standalone or as a CompiledSubAgent in an orchestrator.
+        CompiledStateGraph: 독립적으로 사용하거나 오케스트레이터의
+        CompiledSubAgent로 사용할 수 있는 완전 자율적 연구 에이전트.
 
     Example:
-        # Standalone usage
+        # 독립 사용
         researcher = create_researcher_agent()
         result = researcher.invoke({
-            "messages": [HumanMessage("Research quantum computing trends")]
+            "messages": [HumanMessage("양자 컴퓨팅 트렌드 연구")]
         })
 
-        # As SubAgent in orchestrator
+        # 오케스트레이터의 SubAgent로 사용
         subagent = get_researcher_subagent()
         orchestrator = create_deep_agent(subagents=[subagent, ...])
     """
     if model is None:
         model = ChatOpenAI(model="gpt-4.1", temperature=0.0)
 
-    # Format prompt with current date
+    # 현재 날짜로 프롬프트 포맷팅
     current_date = datetime.now().strftime("%Y-%m-%d")
     formatted_prompt = AUTONOMOUS_RESEARCHER_INSTRUCTIONS.format(date=current_date)
 
@@ -69,20 +69,20 @@ def get_researcher_subagent(
     model: str | BaseChatModel | None = None,
     backend: BackendProtocol | BackendFactory | None = None,
 ) -> dict:
-    """Get researcher as a CompiledSubAgent for use in orchestrator.
+    """오케스트레이터에서 사용할 CompiledSubAgent로 연구자를 가져온다.
 
-    This function creates an autonomous researcher agent and wraps it
-    in the CompiledSubAgent format expected by SubAgentMiddleware.
+    이 함수는 자율적 연구 에이전트를 생성하고 SubAgentMiddleware가
+    기대하는 CompiledSubAgent 형식으로 래핑한다.
 
     Args:
-        model: LLM to use. Defaults to gpt-4.1.
-        backend: Backend for file operations.
+        model: 사용할 LLM. 기본값은 gpt-4.1.
+        backend: 파일 작업용 백엔드.
 
     Returns:
-        dict: CompiledSubAgent with keys:
+        dict: 다음 키를 가진 CompiledSubAgent:
             - name: "researcher"
-            - description: Used by orchestrator to decide when to delegate
-            - runnable: The autonomous researcher agent
+            - description: 오케스트레이터가 위임 결정 시 사용
+            - runnable: 자율적 연구 에이전트
 
     Example:
         from research_agent.researcher import get_researcher_subagent

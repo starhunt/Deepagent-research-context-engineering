@@ -75,6 +75,9 @@ pub enum DeepAgentError {
 
     #[error("Tool not found: {0}")]
     ToolNotFound(String),
+
+    #[error("Message conversion error: {0}")]
+    Conversion(String),
 }
 
 /// 쓰기 작업 결과

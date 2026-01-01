@@ -3,26 +3,13 @@
 //! Python Reference: deepagents/graph.py
 
 use std::sync::Arc;
-use async_trait::async_trait;
 
 use crate::backends::Backend;
 use crate::error::DeepAgentError;
-use crate::middleware::{MiddlewareStack, DynTool, ToolDefinition};
+use crate::llm::{LLMProvider, LLMConfig};
+use crate::middleware::{MiddlewareStack, DynTool};
 use crate::runtime::ToolRuntime;
 use crate::state::{AgentState, Message, ToolCall};
-
-/// LLM 인터페이스 트레이트
-///
-/// 다양한 LLM 제공자 (OpenAI, Anthropic, Rig 등)를 추상화합니다.
-#[async_trait]
-pub trait LLMProvider: Send + Sync {
-    /// 메시지로부터 응답 생성
-    async fn generate(
-        &self,
-        messages: &[Message],
-        tools: &[ToolDefinition],
-    ) -> Result<Message, DeepAgentError>;
-}
 
 /// Agent Executor
 ///
@@ -32,16 +19,28 @@ pub trait LLMProvider: Send + Sync {
 /// 3. 도구 호출 처리
 /// 4. 반복 (도구 호출이 없을 때까지)
 /// 5. 미들웨어 after hooks 실행
-pub struct AgentExecutor<L: LLMProvider> {
-    llm: L,
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use rig_deepagents::{AgentExecutor, OpenAIProvider, MiddlewareStack};
+///
+/// let provider = Arc::new(OpenAIProvider::from_env()?);
+/// let executor = AgentExecutor::new(provider, MiddlewareStack::new(), backend);
+/// let result = executor.run(initial_state).await?;
+/// ```
+pub struct AgentExecutor {
+    llm: Arc<dyn LLMProvider>,
     middleware: MiddlewareStack,
     backend: Arc<dyn Backend>,
     max_iterations: usize,
+    config: Option<LLMConfig>,
 }
 
-impl<L: LLMProvider> AgentExecutor<L> {
+impl AgentExecutor {
+    /// Create a new agent executor with the given LLM provider
     pub fn new(
-        llm: L,
+        llm: Arc<dyn LLMProvider>,
         middleware: MiddlewareStack,
         backend: Arc<dyn Backend>,
     ) -> Self {
@@ -50,11 +49,19 @@ impl<L: LLMProvider> AgentExecutor<L> {
             middleware,
             backend,
             max_iterations: 50,
+            config: None,
         }
     }
 
+    /// Set the maximum number of iterations for the agent loop
     pub fn with_max_iterations(mut self, max: usize) -> Self {
         self.max_iterations = max;
+        self
+    }
+
+    /// Set LLM configuration for all calls
+    pub fn with_config(mut self, config: LLMConfig) -> Self {
+        self.config = Some(config);
         self
     }
 
@@ -77,8 +84,14 @@ impl<L: LLMProvider> AgentExecutor<L> {
         for iteration in 0..self.max_iterations {
             tracing::debug!(iteration, "Agent iteration");
 
-            // LLM 호출
-            let response = self.llm.generate(&state.messages, &tool_definitions).await?;
+            // LLM 호출 (using new LLMProvider interface)
+            let llm_response = self.llm.complete(
+                &state.messages,
+                &tool_definitions,
+                self.config.as_ref(),
+            ).await?;
+
+            let response = llm_response.message;
             state.add_message(response.clone());
 
             // 도구 호출이 없으면 종료
@@ -129,9 +142,12 @@ impl<L: LLMProvider> AgentExecutor<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use crate::backends::MemoryBackend;
+    use crate::llm::LLMResponse;
+    use crate::middleware::ToolDefinition;
 
-    /// Mock LLM for testing
+    /// Mock LLM for testing that implements the new LLMProvider trait
     struct MockLLM {
         responses: Vec<Message>,
         call_count: std::sync::atomic::AtomicUsize,
@@ -152,21 +168,31 @@ mod tests {
 
     #[async_trait]
     impl LLMProvider for MockLLM {
-        async fn generate(
+        async fn complete(
             &self,
             _messages: &[Message],
             _tools: &[ToolDefinition],
-        ) -> Result<Message, DeepAgentError> {
+            _config: Option<&LLMConfig>,
+        ) -> Result<LLMResponse, DeepAgentError> {
             let count = self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(self.responses.get(count).cloned().unwrap_or_else(|| {
+            let message = self.responses.get(count).cloned().unwrap_or_else(|| {
                 Message::assistant("Default response")
-            }))
+            });
+            Ok(LLMResponse::new(message))
+        }
+
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        fn default_model(&self) -> &str {
+            "mock-model"
         }
     }
 
     #[tokio::test]
     async fn test_executor_basic() {
-        let llm = MockLLM::simple();
+        let llm = Arc::new(MockLLM::simple());
         let backend = Arc::new(MemoryBackend::new());
         let middleware = MiddlewareStack::new();
 
@@ -197,7 +223,7 @@ mod tests {
             Message::assistant("Done reading file."),
         ];
 
-        let llm = MockLLM::new(responses);
+        let llm = Arc::new(MockLLM::new(responses));
         let backend = Arc::new(MemoryBackend::new());
 
         // Pre-populate backend with test file
@@ -229,7 +255,7 @@ mod tests {
             .map(|_| Message::assistant_with_tool_calls("", vec![tool_call.clone()]))
             .collect();
 
-        let llm = MockLLM::new(responses);
+        let llm = Arc::new(MockLLM::new(responses));
         let backend = Arc::new(MemoryBackend::new());
         let middleware = MiddlewareStack::new();
 
@@ -247,5 +273,27 @@ mod tests {
         // Plus initial user message = 1
         // So max of 5 iterations = 1 + (5 * 2) = 11 messages
         assert!(result.messages.len() <= 11);
+    }
+
+    #[tokio::test]
+    async fn test_executor_with_config() {
+        let llm = Arc::new(MockLLM::simple());
+        let backend = Arc::new(MemoryBackend::new());
+        let middleware = MiddlewareStack::new();
+
+        let config = LLMConfig::new("test-model")
+            .with_temperature(0.5)
+            .with_max_tokens(1000);
+
+        let executor = AgentExecutor::new(llm, middleware, backend)
+            .with_config(config);
+
+        let initial_state = AgentState::with_messages(vec![
+            Message::user("Hello with config!")
+        ]);
+
+        let result = executor.run(initial_state).await.unwrap();
+
+        assert!(result.messages.len() >= 2);
     }
 }

@@ -20,3 +20,10 @@ pub use state::{AgentState, Message, Role, Todo, TodoStatus, FileData, ToolCall}
 pub use backends::{Backend, FileInfo, GrepMatch, MemoryBackend, FilesystemBackend, CompositeBackend};
 pub use middleware::{AgentMiddleware, MiddlewareStack, StateUpdate, Tool, ToolDefinition, DynTool};
 pub use runtime::{ToolRuntime, RuntimeConfig};
+pub use tools::{
+    ReadFileTool, WriteFileTool, EditFileTool,
+    LsTool, GlobTool, GrepTool,
+    WriteTodosTool, TaskTool,
+    default_tools, all_tools,
+};
+pub use executor::{AgentExecutor, LLMProvider};

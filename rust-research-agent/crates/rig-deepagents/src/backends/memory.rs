@@ -62,31 +62,41 @@ impl Backend for MemoryBackend {
         let path = normalize_path(path)?;
         let files = self.files.read().await;
 
-        let prefix = if path == "/" { "" } else { &path };
         let mut results = Vec::new();
         let mut dirs_seen = HashSet::new();
 
-        for (file_path, data) in files.iter() {
-            if file_path.starts_with(prefix) || prefix.is_empty() {
-                let relative = file_path.strip_prefix(prefix).unwrap_or(file_path);
-                let relative = relative.trim_start_matches('/');
+        // 디렉토리 prefix 계산 (정확한 경계 확인용)
+        let normalized_prefix = if path == "/" {
+            "/".to_string()
+        } else {
+            format!("{}/", path.trim_end_matches('/'))
+        };
 
-                if let Some(slash_pos) = relative.find('/') {
-                    // 서브디렉토리
-                    let dir_name = &relative[..slash_pos];
-                    let dir_path = format!("{}/{}", path.trim_end_matches('/'), dir_name);
-                    if dirs_seen.insert(dir_path.clone()) {
-                        results.push(FileInfo::dir(&format!("{}/", dir_path)));
-                    }
-                } else if !relative.is_empty() {
-                    // 파일
-                    let size = data.content.iter().map(|s| s.len()).sum::<usize>() as u64;
-                    results.push(FileInfo::file_with_time(
-                        file_path,
-                        size,
-                        &data.modified_at,
-                    ));
+        for (file_path, data) in files.iter() {
+            // is_under_path로 정확한 디렉토리 경계 확인
+            if !is_under_path(file_path, &path) {
+                continue;
+            }
+
+            let prefix_to_strip = if path == "/" { "/" } else { &normalized_prefix };
+            let relative = file_path.strip_prefix(prefix_to_strip)
+                .unwrap_or_else(|| file_path.strip_prefix(&path).unwrap_or(file_path));
+
+            if let Some(slash_pos) = relative.find('/') {
+                // 서브디렉토리
+                let dir_name = &relative[..slash_pos];
+                let dir_path = format!("{}/{}", path.trim_end_matches('/'), dir_name);
+                if dirs_seen.insert(dir_path.clone()) {
+                    results.push(FileInfo::dir(&format!("{}/", dir_path)));
                 }
+            } else if !relative.is_empty() {
+                // 파일
+                let size = data.content.iter().map(|s| s.len()).sum::<usize>() as u64;
+                results.push(FileInfo::file_with_time(
+                    file_path,
+                    size,
+                    &data.modified_at,
+                ));
             }
         }
 
@@ -346,6 +356,23 @@ mod tests {
         assert!(backend.exists("/test.txt").await.unwrap());
         backend.delete("/test.txt").await.unwrap();
         assert!(!backend.exists("/test.txt").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_memory_backend_ls_boundary_check() {
+        let backend = MemoryBackend::new();
+        backend.write("/dir/file.txt", "in dir").await.unwrap();
+        backend.write("/directory/other.txt", "in directory").await.unwrap();
+
+        // /dir에서 ls 하면 /directory 파일은 보이지 않아야 함
+        let files = backend.ls("/dir").await.unwrap();
+
+        assert_eq!(files.len(), 1, "Should only find files under /dir, not /directory");
+        assert!(files[0].path.contains("/dir/"), "File should be under /dir");
+        assert!(
+            !files.iter().any(|f| f.path.contains("/directory")),
+            "Should not include /directory files"
+        );
     }
 
     #[tokio::test]

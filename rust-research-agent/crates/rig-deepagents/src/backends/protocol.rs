@@ -88,10 +88,27 @@ pub trait Backend: Send + Sync {
     /// Python: glob_info(pattern: str, path: str) -> list[FileInfo]
     async fn glob(&self, pattern: &str, path: &str) -> Result<Vec<FileInfo>, BackendError>;
 
-    /// 텍스트 검색 (리터럴 문자열)
+    /// 파일 내용에서 패턴 검색
     /// Python: grep_raw(pattern: str, path: str | None, glob: str | None) -> list[GrepMatch]
     ///
-    /// **Important:** pattern은 리터럴 문자열입니다 (정규식 아님!)
+    /// # Design Decision: Literal Search
+    ///
+    /// Rust 구현은 **리터럴 문자열 검색**을 사용합니다 (Python의 regex와 다름).
+    ///
+    /// 선택 이유:
+    /// - **보안**: 정규식 패턴 주입 공격 방지 (ReDoS 등)
+    /// - **성능**: 정규식 컴파일 오버헤드 없음, 단순 substring 매칭
+    /// - **단순성**: LLM 에이전트가 이해하기 쉬운 동작
+    ///
+    /// 정규식이 필요한 경우:
+    /// - `regex` crate를 사용하는 `grep_regex` 메서드 추가 고려
+    /// - 또는 Backend 구현체에서 regex 기능 확장
+    ///
+    /// # Parameters
+    ///
+    /// * `pattern` - 검색할 리터럴 문자열 (regex 아님!)
+    /// * `path` - 검색 시작 디렉토리 (None이면 루트)
+    /// * `glob_filter` - 파일 필터 패턴 (예: `**/*.rs`, `*.txt`)
     async fn grep(
         &self,
         pattern: &str,

@@ -39,6 +39,11 @@ impl FilesystemBackend {
     }
 
     /// 경로 검증 및 해결
+    ///
+    /// # Security: 심볼릭 링크를 통한 루트 탈출 방지
+    ///
+    /// 부모 디렉토리가 심볼릭 링크인 경우 이를 canonicalize하여
+    /// 루트 외부로의 탈출을 차단합니다.
     fn resolve_path(&self, path: &str) -> Result<PathBuf, BackendError> {
         if self.virtual_mode {
             // 경로 탐색 방지
@@ -47,17 +52,42 @@ impl FilesystemBackend {
             }
 
             let clean_path = path.trim_start_matches('/');
+
+            // 루트 경로 ("/") 또는 빈 경로는 루트 디렉토리 자체
+            if clean_path.is_empty() {
+                return Ok(self.root.clone());
+            }
+
             let target = self.root.join(clean_path);
 
-            // 존재하는 경로는 canonicalize, 존재하지 않으면 그대로 사용
-            let resolved = target.canonicalize().unwrap_or_else(|_| target.clone());
-
-            // 루트 외부 접근 방지 - 루트도 canonicalize해서 비교
+            // 루트를 canonicalize
             let canonical_root = self.root.canonicalize()
                 .unwrap_or_else(|_| self.root.clone());
 
-            if !resolved.starts_with(&canonical_root) && !target.starts_with(&self.root) {
-                return Err(BackendError::PathTraversal(path.to_string()));
+            // 부모 디렉토리가 존재하면 canonicalize하여 symlink 해석
+            // (루트 자체는 제외 - 루트 경로는 위에서 이미 처리됨)
+            if let Some(parent) = target.parent() {
+                if parent.exists() && parent != self.root {
+                    let canonical_parent = parent.canonicalize()
+                        .map_err(|e| BackendError::Io(e.to_string()))?;
+
+                    // 부모가 루트 외부이면 차단
+                    if !canonical_parent.starts_with(&canonical_root) {
+                        return Err(BackendError::PathTraversal(
+                            format!("Symlink escape detected: {}", path)
+                        ));
+                    }
+                }
+            }
+
+            // 존재하는 경로는 canonicalize해서 최종 확인
+            if target.exists() {
+                let resolved = target.canonicalize()
+                    .map_err(|e| BackendError::Io(e.to_string()))?;
+
+                if !resolved.starts_with(&canonical_root) {
+                    return Err(BackendError::PathTraversal(path.to_string()));
+                }
             }
 
             Ok(target)
@@ -268,7 +298,15 @@ impl Backend for FilesystemBackend {
             return Ok(vec![]);
         }
 
-        let glob_pattern = glob_filter.map(Pattern::new).transpose()
+        // glob 패턴 정규화: **로 시작하지 않으면 **/ 접두사 추가
+        let glob_pattern = glob_filter.map(|g| {
+            let normalized = if g.starts_with("**/") || g.starts_with("/") {
+                g.to_string()
+            } else {
+                format!("**/{}", g)
+            };
+            Pattern::new(&normalized)
+        }).transpose()
             .map_err(|e| BackendError::Pattern(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -279,10 +317,16 @@ impl Backend for FilesystemBackend {
                 continue;
             }
 
-            // Glob filter
+            // Glob filter - 전체 상대 경로에 대해 매칭
             if let Some(ref gp) = glob_pattern {
-                let name = entry.file_name().to_string_lossy();
-                if !gp.matches(&name) {
+                let relative_path = entry.path()
+                    .strip_prefix(&resolved)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| entry.path().to_string_lossy().to_string());
+
+                // 전체 경로 또는 파일명 매칭 (어느 하나라도 통과하면 OK)
+                let filename = entry.file_name().to_string_lossy();
+                if !gp.matches(&relative_path) && !gp.matches(&filename) {
                     continue;
                 }
             }
@@ -334,6 +378,38 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
+    #[cfg(unix)]
+    async fn test_filesystem_backend_symlink_traversal_prevention() {
+        use std::os::unix::fs::symlink;
+        use tempfile::tempdir;
+
+        // 테스트용 디렉토리 생성
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+
+        // 루트 외부에 파일 생성
+        let outside_file = outside.path().join("secret.txt");
+        std::fs::write(&outside_file, "secret data").unwrap();
+
+        // 루트 내부에 외부를 가리키는 심볼릭 링크 생성
+        let symlink_path = root.path().join("escape");
+        symlink(outside.path(), &symlink_path).unwrap();
+
+        let backend = FilesystemBackend::new(root.path());
+
+        // 심볼릭 링크를 통한 읽기 시도 - 차단되어야 함
+        let result = backend.read("/escape/secret.txt", 0, 100).await;
+        assert!(result.is_err(), "Should block symlink traversal on read");
+
+        // 심볼릭 링크를 통한 쓰기 시도 - 차단되어야 함
+        let result = backend.write("/escape/malicious.txt", "pwned").await;
+        assert!(
+            result.is_err() || result.as_ref().map(|r| !r.is_ok()).unwrap_or(false),
+            "Should block write via symlink"
+        );
+    }
+
+    #[tokio::test]
     async fn test_filesystem_backend_write_and_read() {
         let temp = TempDir::new().unwrap();
         let backend = FilesystemBackend::new(temp.path());
@@ -353,5 +429,32 @@ mod tests {
 
         let result = backend.read("/../etc/passwd", 0, 100).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_filesystem_backend_grep_path_glob() {
+        let temp = TempDir::new().unwrap();
+
+        // 중첩 디렉토리에 파일 생성
+        let src_dir = temp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() { println!(\"hello\"); }").unwrap();
+        std::fs::write(src_dir.join("lib.rs"), "pub fn hello() {}").unwrap();
+        std::fs::write(temp.path().join("README.md"), "# Hello").unwrap();
+
+        let backend = FilesystemBackend::new(temp.path());
+
+        // **/*.rs 패턴으로 검색 - .rs 파일만 매칭
+        let results = backend.grep("fn", None, Some("**/*.rs")).await.unwrap();
+
+        assert!(!results.is_empty(), "Should find matches in .rs files");
+        assert!(
+            results.iter().all(|m| m.path.ends_with(".rs")),
+            "All matches should be from .rs files"
+        );
+
+        // *.rs 패턴도 작동해야 함 (자동으로 **/ 접두사 추가)
+        let results2 = backend.grep("fn", None, Some("*.rs")).await.unwrap();
+        assert!(!results2.is_empty(), "*.rs pattern should also work");
     }
 }

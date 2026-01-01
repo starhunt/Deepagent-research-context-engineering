@@ -53,6 +53,9 @@ pub enum MiddlewareError {
 
     #[error("SubAgent error: {0}")]
     SubAgent(String),
+
+    #[error("Recursion limit exceeded: {0}")]
+    RecursionLimit(String),
 }
 
 /// DeepAgent 최상위 에러

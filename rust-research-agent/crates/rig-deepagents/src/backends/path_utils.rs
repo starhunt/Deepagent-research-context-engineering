@@ -27,10 +27,11 @@ use crate::error::BackendError;
 /// 경로 정규화
 /// - 앞에 `/` 추가
 /// - 연속된 슬래시 제거 (`//` -> `/`)
+/// - `.` 세그먼트 제거 (`/./` -> `/`)
 /// - 후행 슬래시 제거 (루트 제외)
-/// - 경로 순회 공격 방지
+/// - 경로 순회 공격 방지 (..는 차단, .은 허용)
 pub fn normalize_path(path: &str) -> Result<String, BackendError> {
-    // 경로 순회 공격 방지
+    // 경로 순회 공격 방지 (..는 차단, .은 허용)
     if path.contains("..") || path.starts_with("~") {
         return Err(BackendError::PathTraversal(path.to_string()));
     }
@@ -40,9 +41,9 @@ pub fn normalize_path(path: &str) -> Result<String, BackendError> {
         return Ok("/".to_string());
     }
 
-    // 연속된 슬래시 제거
+    // 연속된 슬래시 제거 및 "." 세그먼트 필터링
     let parts: Vec<&str> = path.split('/')
-        .filter(|p| !p.is_empty())
+        .filter(|p| !p.is_empty() && *p != ".")
         .collect();
 
     if parts.is_empty() {
@@ -97,6 +98,14 @@ mod tests {
         assert!(normalize_path("../etc/passwd").is_err());
         assert!(normalize_path("/dir/../etc/passwd").is_err());
         assert!(normalize_path("~/.ssh/id_rsa").is_err());
+    }
+
+    #[test]
+    fn test_normalize_path_dot_segments() {
+        assert_eq!(normalize_path("/./file.txt").unwrap(), "/file.txt");
+        assert_eq!(normalize_path("/dir/./sub/file.txt").unwrap(), "/dir/sub/file.txt");
+        assert_eq!(normalize_path("./file.txt").unwrap(), "/file.txt");
+        assert_eq!(normalize_path("/dir/.").unwrap(), "/dir");
     }
 
     #[test]

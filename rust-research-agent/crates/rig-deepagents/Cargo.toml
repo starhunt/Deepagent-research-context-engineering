@@ -1,0 +1,31 @@
+[package]
+name = "rig-deepagents"
+version = "0.1.0"
+edition = "2021"
+description = "DeepAgents-style middleware system for Rig framework"
+license = "MIT"
+
+[dependencies]
+rig-core = { version = "0.27", features = ["derive"] }
+tokio = { version = "1", features = ["full", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
+uuid = { version = "1", features = ["v4"] }
+walkdir = "2"  # Added: needed for FilesystemBackend recursive traversal
+
+[dev-dependencies]
+# OpenAI support is built into rig-core
+tokio-test = "0.4"
+dotenv = "0.15"
+criterion = { version = "0.5", features = ["async_tokio"] }
+tempfile = "3"  # For filesystem tests
+
+[[bench]]
+name = "middleware_benchmark"
+harness = false

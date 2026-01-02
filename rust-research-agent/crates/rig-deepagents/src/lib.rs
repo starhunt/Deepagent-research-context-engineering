@@ -48,8 +48,21 @@ pub use tools::{
     LsTool, GlobTool, GrepTool,
     WriteTodosTool, TaskTool,
     default_tools, all_tools,
+    // Domain tools
+    TavilySearchTool, TavilyError, SearchDepth, Topic,
+    ThinkTool,
+    research_tools, research_tools_with_tavily,
 };
 pub use executor::AgentExecutor;
+
+// Research workflow exports
+pub use research::{
+    ResearchState, ResearchUpdate, ResearchPhase,
+    ResearchDirection, Finding, Source, SourceAgreement,
+    ResearchWorkflowBuilder, ResearchConfig,
+    ResearchPrompts, PromptBuilder,
+    can_continue_research, determine_next_phase, phase_transition_update,
+};
 
 // LLM Provider exports
 pub use llm::{

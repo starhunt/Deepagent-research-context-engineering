@@ -189,6 +189,16 @@ pub struct ResearchState {
 
     /// Any errors encountered during research
     pub errors: Vec<String>,
+
+    /// Whether research can continue (computed field for router decisions)
+    /// This is automatically updated after each state update.
+    #[serde(default = "default_can_continue")]
+    pub can_continue: bool,
+}
+
+/// Default value for can_continue - new states start as continuable
+fn default_can_continue() -> bool {
+    true
 }
 
 impl ResearchState {
@@ -198,8 +208,40 @@ impl ResearchState {
             query: query.into(),
             phase: ResearchPhase::Exploratory,
             max_searches: 6,
+            can_continue: true, // New states can always continue
             ..Default::default()
         }
+    }
+
+    /// Refreshes the `can_continue` computed field based on current state.
+    /// Call this after directly mutating state fields (outside of `apply_update`).
+    ///
+    /// In normal workflow operation, `can_continue` is automatically updated
+    /// via `apply_update()`. This method is primarily for testing or manual
+    /// state manipulation.
+    pub fn refresh_can_continue(&mut self) {
+        self.can_continue = self.compute_can_continue();
+    }
+
+    /// Compute whether research can continue based on current state.
+    /// This checks: budget availability, terminal phase, and unexplored directions.
+    fn compute_can_continue(&self) -> bool {
+        // Check if we've exceeded search budget
+        if self.search_count >= self.max_searches {
+            return false;
+        }
+
+        // Check if we're in a terminal phase
+        if self.phase.is_terminal() {
+            return false;
+        }
+
+        // Check if all directions have been explored in Directed phase
+        if self.phase == ResearchPhase::Directed && self.unexplored_directions().is_empty() {
+            return false;
+        }
+
+        true
     }
 
     /// Configure the maximum number of searches
@@ -417,6 +459,9 @@ impl WorkflowState for ResearchState {
 
         // Collect errors
         new_state.errors.extend(update.errors);
+
+        // Recompute can_continue based on new state
+        new_state.can_continue = new_state.compute_can_continue();
 
         new_state
     }

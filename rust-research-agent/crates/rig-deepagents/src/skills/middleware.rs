@@ -178,7 +178,10 @@ mod tests {
     use crate::state::AgentState;
     use std::path::PathBuf;
 
-    async fn create_test_loader() -> Arc<SkillLoader> {
+    /// Creates a test loader with temporary skill files.
+    /// Returns both the loader and the TempDir to keep it alive during the test.
+    /// The TempDir is automatically cleaned up when dropped at the end of the test.
+    async fn create_test_loader() -> (Arc<SkillLoader>, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().unwrap();
         let skill_dir = temp_dir.path().join("test-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
@@ -218,18 +221,17 @@ Different content here.
         )
         .unwrap();
 
-        // Leak the temp_dir to keep it alive for the test
         let path = temp_dir.path().to_path_buf();
-        std::mem::forget(temp_dir);
-
         let loader = Arc::new(SkillLoader::new(None, Some(path)));
         loader.initialize().await.unwrap();
-        loader
+
+        // Return both loader and temp_dir - caller must keep temp_dir alive
+        (loader, temp_dir)
     }
 
     #[tokio::test]
     async fn test_middleware_provides_tool() {
-        let loader = create_test_loader().await;
+        let (loader, _temp_dir) = create_test_loader().await;
         let middleware = SkillsMiddleware::with_loader(loader).await;
 
         let tools = middleware.tools();
@@ -239,7 +241,7 @@ Different content here.
 
     #[tokio::test]
     async fn test_middleware_modifies_prompt() {
-        let loader = create_test_loader().await;
+        let (loader, _temp_dir) = create_test_loader().await;
         let middleware = SkillsMiddleware::with_loader(loader).await;
 
         let base_prompt = "You are a helpful assistant.";
@@ -254,7 +256,7 @@ Different content here.
 
     #[tokio::test]
     async fn test_use_skill_tool() {
-        let loader = create_test_loader().await;
+        let (loader, _temp_dir) = create_test_loader().await;
         let tool = UseSkillTool {
             loader: Arc::clone(&loader),
         };

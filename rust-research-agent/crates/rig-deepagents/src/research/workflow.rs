@@ -328,26 +328,11 @@ impl ResearchConfig {
 }
 
 /// Helper function to check if research can continue based on budget and phase.
+///
+/// This delegates to the state's computed `can_continue` field for consistency.
+/// The field is automatically updated after each state update.
 pub fn can_continue_research(state: &ResearchState) -> bool {
-    // Check if we've exceeded search budget
-    if state.search_count >= state.max_searches {
-        return false;
-    }
-
-    // Check if we're in a terminal phase
-    if state.phase.is_terminal() {
-        return false;
-    }
-
-    // Check if all directions have been explored in Directed phase
-    if state.phase == ResearchPhase::Directed {
-        let unexplored = state.unexplored_directions();
-        if unexplored.is_empty() {
-            return false;
-        }
-    }
-
-    true
+    state.can_continue
 }
 
 /// Determine the next phase based on current state.
@@ -449,6 +434,7 @@ mod tests {
 
         // Cannot continue when at budget
         state.search_count = 3;
+        state.refresh_can_continue(); // Refresh after direct mutation
         assert!(!can_continue_research(&state));
     }
 
@@ -461,6 +447,7 @@ mod tests {
 
         // Cannot continue in terminal phase
         state.phase = ResearchPhase::Complete;
+        state.refresh_can_continue(); // Refresh after direct mutation
         assert!(!can_continue_research(&state));
     }
 
@@ -468,16 +455,19 @@ mod tests {
     fn test_can_continue_research_directions() {
         let mut state = ResearchState::new("test");
         state.phase = ResearchPhase::Directed;
+        state.refresh_can_continue(); // Refresh after direct mutation
 
         // Cannot continue without directions
         assert!(!can_continue_research(&state));
 
         // Can continue with unexplored directions
         state.directions.push(ResearchDirection::new("Dir A", "Reason", 5));
+        state.refresh_can_continue(); // Refresh after direct mutation
         assert!(can_continue_research(&state));
 
         // Cannot continue when all explored
         state.directions[0].explored = true;
+        state.refresh_can_continue(); // Refresh after direct mutation
         assert!(!can_continue_research(&state));
     }
 

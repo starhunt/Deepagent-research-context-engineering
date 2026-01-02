@@ -540,7 +540,7 @@ mod tests {
         let messages = vec![WorkflowMessage::data("input", "test")];
         let mut ctx = ComputeContext::new(VertexId::new("router"), &messages, 0, &test_state);
 
-        let result = vertex.compute(&mut ctx).await.unwrap();
+        let result: ComputeResult<UnitUpdate> = vertex.compute(&mut ctx).await.unwrap();
         assert_eq!(result.state, VertexState::Halted);
 
         let outbox = ctx.into_outbox();

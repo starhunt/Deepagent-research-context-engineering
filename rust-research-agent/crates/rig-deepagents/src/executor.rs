@@ -8,7 +8,7 @@ use crate::backends::Backend;
 use crate::error::DeepAgentError;
 use crate::llm::{LLMProvider, LLMConfig};
 use crate::middleware::{MiddlewareStack, DynTool};
-use crate::runtime::ToolRuntime;
+use crate::runtime::{RuntimeConfig, ToolRuntime};
 use crate::state::{AgentState, Message, ToolCall};
 
 /// Agent Executor
@@ -35,6 +35,14 @@ pub struct AgentExecutor {
     backend: Arc<dyn Backend>,
     max_iterations: usize,
     config: Option<LLMConfig>,
+    /// Additional tools to inject (beyond middleware tools)
+    additional_tools: Vec<DynTool>,
+    /// System prompt to prepend to messages
+    system_prompt: Option<String>,
+    /// Current recursion depth (for nested subagent calls)
+    recursion_depth: usize,
+    /// Maximum recursion depth
+    max_recursion: usize,
 }
 
 impl AgentExecutor {
@@ -50,6 +58,10 @@ impl AgentExecutor {
             backend,
             max_iterations: 50,
             config: None,
+            additional_tools: Vec::new(),
+            system_prompt: None,
+            recursion_depth: 0,
+            max_recursion: 100,  // Default matches Python
         }
     }
 
@@ -65,17 +77,64 @@ impl AgentExecutor {
         self
     }
 
+    /// Add additional tools to the executor (beyond middleware tools)
+    ///
+    /// These tools are merged with middleware-provided tools during execution.
+    pub fn with_tools(mut self, tools: Vec<DynTool>) -> Self {
+        self.additional_tools = tools;
+        self
+    }
+
+    /// Set a system prompt to prepend to messages
+    ///
+    /// This system message is added at the start of every execution.
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Set recursion depth for nested subagent calls (H2 fix)
+    ///
+    /// This is propagated to the ToolRuntime so nested `task` calls
+    /// see the correct recursion depth.
+    pub fn with_recursion_depth(mut self, depth: usize) -> Self {
+        self.recursion_depth = depth;
+        self
+    }
+
+    /// Set maximum recursion depth
+    pub fn with_max_recursion(mut self, max: usize) -> Self {
+        self.max_recursion = max;
+        self
+    }
+
     /// 에이전트 실행
     pub async fn run(&self, initial_state: AgentState) -> Result<AgentState, DeepAgentError> {
         let mut state = initial_state;
-        let runtime = ToolRuntime::new(state.clone(), self.backend.clone());
+
+        // Prepend system prompt if configured
+        if let Some(ref system_prompt) = self.system_prompt {
+            // Insert system message at the beginning
+            let system_msg = Message::system(system_prompt);
+            state.messages.insert(0, system_msg);
+        }
+
+        // Create runtime with proper recursion configuration (H2 fix)
+        let runtime_config = RuntimeConfig {
+            debug: false,
+            max_recursion: self.max_recursion,
+            current_recursion: self.recursion_depth,
+        };
+        let runtime = ToolRuntime::new(state.clone(), self.backend.clone())
+            .with_config(runtime_config);
 
         // Before hooks 실행 (미들웨어 스택이 내부적으로 상태 업데이트 적용)
         let _before_updates = self.middleware.before_agent(&mut state, &runtime).await
             .map_err(DeepAgentError::Middleware)?;
 
-        // 도구 수집
-        let tools = self.middleware.collect_tools();
+        // 도구 수집 (middleware tools + additional tools)
+        let mut tools = self.middleware.collect_tools();
+        tools.extend(self.additional_tools.iter().cloned());
         let tool_definitions: Vec<_> = tools.iter()
             .map(|t| t.definition())
             .collect();

@@ -54,6 +54,12 @@ pub enum MiddlewareError {
     #[error("SubAgent error: {0}")]
     SubAgent(String),
 
+    #[error("SubAgent execution error: {0}")]
+    SubAgentExecution(String),
+
+    #[error("SubAgent not found: {0}")]
+    SubAgentNotFound(String),
+
     #[error("Recursion limit exceeded: {0}")]
     RecursionLimit(String),
 }

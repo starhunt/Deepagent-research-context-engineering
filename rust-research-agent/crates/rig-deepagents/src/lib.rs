@@ -36,6 +36,7 @@ pub mod pregel;
 pub mod workflow;
 pub mod skills;
 pub mod research;
+pub mod config;
 
 // Re-exports for convenience
 pub use error::{BackendError, MiddlewareError, DeepAgentError, WriteResult, EditResult};
@@ -63,6 +64,9 @@ pub use research::{
     ResearchPrompts, PromptBuilder,
     can_continue_research, determine_next_phase, phase_transition_update,
 };
+
+// Production configuration exports
+pub use config::{ProductionConfig, ProductionSetup, LLMProviderType};
 
 // LLM Provider exports
 pub use llm::{

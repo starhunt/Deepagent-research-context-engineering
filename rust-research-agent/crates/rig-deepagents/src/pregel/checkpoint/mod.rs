@@ -42,8 +42,12 @@
 //! ```
 
 mod file;
+#[cfg(feature = "checkpointer-sqlite")]
+mod sqlite;
 
 pub use file::FileCheckpointer;
+#[cfg(feature = "checkpointer-sqlite")]
+pub use sqlite::SqliteCheckpointer;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -326,8 +330,16 @@ where
 
         #[cfg(feature = "checkpointer-sqlite")]
         CheckpointerConfig::Sqlite { path } => {
-            // SQLite checkpointer will be implemented in Task 8.2.3
-            Err(PregelError::not_implemented("SQLite checkpointer"))
+            // Note: We need to wrap this in a blocking call since create_checkpointer is sync
+            // For async initialization, use SqliteCheckpointer::new() directly
+            let rt = tokio::runtime::Handle::try_current()
+                .map_err(|_| PregelError::checkpoint_error("No tokio runtime available"))?;
+
+            let checkpointer = rt.block_on(async {
+                SqliteCheckpointer::new(&path, workflow_id).await
+            })?;
+
+            Ok(Box::new(checkpointer))
         }
 
         #[cfg(feature = "checkpointer-redis")]

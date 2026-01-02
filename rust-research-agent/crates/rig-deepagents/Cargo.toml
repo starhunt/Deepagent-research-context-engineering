@@ -7,7 +7,7 @@ license = "MIT"
 
 [features]
 default = []
-checkpointer-sqlite = []
+checkpointer-sqlite = ["dep:rusqlite", "dep:tokio-rusqlite"]
 checkpointer-redis = []
 checkpointer-postgres = []
 
@@ -43,6 +43,10 @@ dirs = "5"
 
 # CLI argument parsing for skill-validator binary
 clap = { version = "4", features = ["derive"] }
+
+# SQLite checkpointer (optional, requires checkpointer-sqlite feature)
+rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+tokio-rusqlite = { version = "0.5", optional = true }
 
 [dev-dependencies]
 # OpenAI support is built into rig-core

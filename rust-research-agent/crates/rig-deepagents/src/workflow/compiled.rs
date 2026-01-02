@@ -43,9 +43,10 @@ use crate::pregel::vertex::{
     BoxedVertex, ComputeContext, ComputeResult, StateUpdate, Vertex, VertexId,
 };
 use crate::pregel::PregelConfig;
+use crate::middleware::ToolDefinition;
 use crate::workflow::graph::{BuiltWorkflowGraph, END};
 use crate::workflow::node::NodeKind;
-use crate::workflow::vertices::{FanInVertex, FanOutVertex, RouterVertex};
+use crate::workflow::vertices::{AgentVertex, FanInVertex, FanOutVertex, RouterVertex};
 
 /// Errors that can occur during workflow compilation
 #[derive(Debug, Error)]
@@ -98,18 +99,47 @@ impl<S: WorkflowState + Serialize> CompiledWorkflow<S> {
     /// Compile a workflow graph with optional LLM provider
     ///
     /// Provides LLM support for Router nodes with LLMDecision strategy.
-    /// Agent, Tool, and SubAgent nodes still use PassthroughVertex placeholders.
+    /// For full agent support with tools, use `compile_with_tools`.
     pub fn compile_with_providers(
         graph: BuiltWorkflowGraph<S>,
         config: PregelConfig,
         llm: Option<Arc<dyn LLMProvider>>,
+    ) -> Result<Self, WorkflowCompileError> {
+        Self::compile_with_tools(graph, config, llm, vec![])
+    }
+
+    /// Compile a workflow graph with LLM provider and tools
+    ///
+    /// This is the full-featured compilation method that enables:
+    /// - Agent nodes with real LLM calls
+    /// - Router nodes with LLMDecision strategy
+    /// - Tool definitions for agent nodes
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let llm = Arc::new(OpenAIProvider::from_env()?);
+    /// let tools = vec![TavilySearchTool::from_env()?.definition()];
+    ///
+    /// let workflow = CompiledWorkflow::compile_with_tools(
+    ///     graph,
+    ///     PregelConfig::default(),
+    ///     Some(llm),
+    ///     tools,
+    /// )?;
+    /// ```
+    pub fn compile_with_tools(
+        graph: BuiltWorkflowGraph<S>,
+        config: PregelConfig,
+        llm: Option<Arc<dyn LLMProvider>>,
+        tools: Vec<ToolDefinition>,
     ) -> Result<Self, WorkflowCompileError> {
         let mut runtime = PregelRuntime::with_config(config);
         let mut node_kinds = HashMap::new();
 
         // Create vertices from NodeKind
         for (node_id, kind) in &graph.nodes {
-            let vertex = Self::create_vertex(node_id, kind.clone(), llm.clone())?;
+            let vertex = Self::create_vertex(node_id, kind.clone(), llm.clone(), &tools)?;
             runtime.add_vertex(vertex);
             node_kinds.insert(VertexId::new(node_id), kind.clone());
         }
@@ -138,12 +168,26 @@ impl<S: WorkflowState + Serialize> CompiledWorkflow<S> {
         node_id: &str,
         kind: NodeKind,
         llm: Option<Arc<dyn LLMProvider>>,
+        tools: &[ToolDefinition],
     ) -> Result<BoxedVertex<S, WorkflowMessage>, WorkflowCompileError> {
         match kind {
-            NodeKind::Agent(_config) => {
-                // TODO: Full AgentVertex requires LLM + tools
-                // For now, use PassthroughVertex as placeholder
-                Ok(Arc::new(PassthroughVertex::new(node_id)))
+            NodeKind::Agent(config) => {
+                // Use real AgentVertex if LLM is available, otherwise passthrough
+                match llm {
+                    Some(llm_provider) => Ok(Arc::new(AgentVertex::<S>::new(
+                        node_id,
+                        config,
+                        llm_provider,
+                        tools.to_vec(),
+                    ))),
+                    None => {
+                        tracing::warn!(
+                            node_id = node_id,
+                            "Agent node created without LLM provider - using passthrough"
+                        );
+                        Ok(Arc::new(PassthroughVertex::new(node_id)))
+                    }
+                }
             }
             NodeKind::Tool(_config) => {
                 // TODO: ToolVertex requires tool registry

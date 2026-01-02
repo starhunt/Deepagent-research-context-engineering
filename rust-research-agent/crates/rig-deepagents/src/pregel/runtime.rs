@@ -397,6 +397,186 @@ where
             }
         }
     }
+
+    // =========================================================================
+    // Visualization Methods
+    // =========================================================================
+
+    /// Generate a static Mermaid diagram of the workflow structure.
+    ///
+    /// This is useful for debugging - it shows nodes and edges without
+    /// execution state. All nodes render as rectangles since NodeKind
+    /// information is not stored in the runtime.
+    ///
+    /// # Example Output
+    ///
+    /// ```text
+    /// graph TD
+    ///     start([START])
+    ///     agent[agent]
+    ///     tool[tool]
+    ///     end_node([END])
+    ///
+    ///     start --> agent
+    ///     agent --> tool
+    ///     tool --> end_node
+    /// ```
+    pub fn to_mermaid(&self) -> String {
+        self.to_mermaid_internal(false, &std::collections::HashMap::new())
+    }
+
+    /// Generate a Mermaid diagram with node kinds for proper shape rendering.
+    ///
+    /// Use this when you have NodeKind information available (e.g., from
+    /// a WorkflowGraph builder).
+    pub fn to_mermaid_with_kinds(&self, node_kinds: &HashMap<VertexId, crate::workflow::NodeKind>) -> String {
+        self.to_mermaid_internal(false, node_kinds)
+    }
+
+    /// Generate a Mermaid diagram with current execution state.
+    ///
+    /// Vertices are colored based on their state:
+    /// - Active (green): Currently executing
+    /// - Halted (orange): Waiting for messages
+    /// - Completed (gray): Finished processing
+    ///
+    /// # Example Output
+    ///
+    /// ```text
+    /// graph TD
+    ///     start([START]):::completed
+    ///     agent[agent]:::active
+    ///     tool[tool]:::halted
+    ///
+    ///     start --> agent
+    ///     agent --> tool
+    ///
+    ///     classDef active fill:#90EE90,stroke:#228B22,stroke-width:2px
+    ///     classDef halted fill:#FFE4B5,stroke:#FF8C00,stroke-width:1px
+    ///     classDef completed fill:#D3D3D3,stroke:#696969,stroke-width:1px
+    /// ```
+    pub fn to_mermaid_with_state(&self) -> String {
+        self.to_mermaid_internal(true, &std::collections::HashMap::new())
+    }
+
+    /// Generate a Mermaid diagram with both state colors and node shapes.
+    pub fn to_mermaid_with_state_and_kinds(
+        &self,
+        node_kinds: &HashMap<VertexId, crate::workflow::NodeKind>,
+    ) -> String {
+        self.to_mermaid_internal(true, node_kinds)
+    }
+
+    /// Internal implementation for Mermaid generation.
+    fn to_mermaid_internal(
+        &self,
+        include_state: bool,
+        node_kinds: &HashMap<VertexId, crate::workflow::NodeKind>,
+    ) -> String {
+        use std::fmt::Write;
+        use super::visualization::{render_node, render_node_with_state, render_edge, STYLE_DEFS};
+        use crate::workflow::NodeKind;
+
+        let mut output = String::new();
+
+        // Header
+        writeln!(output, "graph TD").unwrap();
+
+        // Collect all vertex IDs
+        let vertex_ids: Vec<_> = self.vertices.keys().collect();
+
+        // Find entry and terminal vertices for special shapes
+        let entry_id = self.entry_vertex.as_ref();
+        let terminal_ids: Vec<_> = self.find_terminal_vertices();
+
+        // Render nodes
+        for id in &vertex_ids {
+            let kind = node_kinds.get(*id);
+            let is_entry = entry_id == Some(*id);
+            let is_terminal = terminal_ids.contains(id);
+
+            // Use special shape for entry/terminal if no kind specified
+            let effective_kind = if kind.is_none() && (is_entry || is_terminal) {
+                None // Stadium shape for START/END
+            } else if kind.is_none() {
+                // Default to Agent shape (rectangle) for regular vertices
+                Some(NodeKind::Agent(Default::default()))
+            } else {
+                kind.cloned()
+            };
+
+            let node_str = if include_state {
+                let state = self.vertex_states.get(*id);
+                render_node_with_state(id, effective_kind.as_ref(), state)
+            } else {
+                render_node(id, effective_kind.as_ref())
+            };
+
+            writeln!(output, "{}", node_str).unwrap();
+        }
+
+        // Empty line before edges
+        writeln!(output).unwrap();
+
+        // Render edges
+        for (from, targets) in &self.edges {
+            for to in targets {
+                // TODO: Add edge label support when edge metadata is available
+                writeln!(output, "{}", render_edge(from, to, None)).unwrap();
+            }
+        }
+
+        // Style definitions for state visualization
+        if include_state {
+            output.push_str(STYLE_DEFS);
+        }
+
+        output
+    }
+
+    /// Find vertices with no outgoing edges (terminal vertices).
+    fn find_terminal_vertices(&self) -> Vec<&VertexId> {
+        self.vertices
+            .keys()
+            .filter(|id| {
+                self.edges.get(*id).is_none_or(|targets| targets.is_empty())
+            })
+            .collect()
+    }
+
+    /// Print execution state to terminal for monitoring.
+    ///
+    /// Shows the state of each vertex with Unicode symbols:
+    /// - ▶ Active: Currently executing
+    /// - ⏸ Halted: Waiting for messages
+    /// - ✓ Completed: Finished processing
+    ///
+    /// # Example Output
+    ///
+    /// ```text
+    /// [Superstep 0]
+    ///   ▶ agent : Active
+    ///   ⏸ tool : Halted
+    ///   ⏸ router : Halted
+    /// ```
+    pub fn log_state(&self, superstep: usize) {
+        println!("[Superstep {}]", superstep);
+
+        // Sort vertex IDs for consistent output
+        let mut vertex_ids: Vec<_> = self.vertex_states.keys().collect();
+        vertex_ids.sort();
+
+        for id in vertex_ids {
+            if let Some(state) = self.vertex_states.get(id) {
+                let symbol = match state {
+                    VertexState::Active => "▶",
+                    VertexState::Halted => "⏸",
+                    VertexState::Completed => "✓",
+                };
+                println!("  {} {} : {:?}", symbol, id, state);
+            }
+        }
+    }
 }
 
 impl<S, M> Default for PregelRuntime<S, M>
@@ -1080,5 +1260,164 @@ mod tests {
         let result = runtime.run(TestState::default()).await;
         assert!(result.is_ok());
         assert_eq!(EXECUTION_ORDER.with(|c| c.load(Ordering::SeqCst)), 3, "All 3 vertices should execute");
+    }
+
+    // =========================================================================
+    // Visualization Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_to_mermaid_simple_chain() {
+        use std::sync::Arc;
+
+        let mut runtime = PregelRuntime::<TestState, WorkflowMessage>::new();
+
+        // Create simple chain: start -> agent -> tool -> end
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("start"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("agent"), increment: 1 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("tool"), increment: 1 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("end"), increment: 0 }))
+            .set_entry("start")
+            .add_edge("start", "agent")
+            .add_edge("agent", "tool")
+            .add_edge("tool", "end");
+
+        let mermaid = runtime.to_mermaid();
+        println!("=== Simple Chain Diagram ===\n{}", mermaid);
+
+        // Verify structure
+        assert!(mermaid.contains("graph TD"));
+        assert!(mermaid.contains("start"));
+        assert!(mermaid.contains("agent"));
+        assert!(mermaid.contains("tool"));
+        assert!(mermaid.contains("end"));
+        assert!(mermaid.contains("-->"));
+    }
+
+    #[test]
+    fn test_to_mermaid_with_state_shows_classes() {
+        use std::sync::Arc;
+
+        let mut runtime = PregelRuntime::<TestState, WorkflowMessage>::new();
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("active_node"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("halted_node"), increment: 0 }))
+            .set_entry("active_node")
+            .add_edge("active_node", "halted_node");
+
+        let mermaid = runtime.to_mermaid_with_state();
+        println!("=== State Diagram ===\n{}", mermaid);
+
+        // Entry is Active, others are Halted (MessageBased mode)
+        assert!(mermaid.contains(":::active") || mermaid.contains(":::halted"));
+        assert!(mermaid.contains("classDef active"));
+        assert!(mermaid.contains("classDef halted"));
+        assert!(mermaid.contains("classDef completed"));
+    }
+
+    #[test]
+    fn test_to_mermaid_with_node_kinds() {
+        use std::sync::Arc;
+        use crate::workflow::NodeKind;
+
+        let mut runtime = PregelRuntime::<TestState, WorkflowMessage>::new();
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("planner"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("search_tool"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("router"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("parallel_split"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("merge_results"), increment: 0 }))
+            .set_entry("planner")
+            .add_edge("planner", "search_tool")
+            .add_edge("search_tool", "router")
+            .add_edge("router", "parallel_split")
+            .add_edge("parallel_split", "merge_results");
+
+        // Provide NodeKind metadata
+        let mut kinds = HashMap::new();
+        kinds.insert(VertexId::new("planner"), NodeKind::Agent(Default::default()));
+        kinds.insert(VertexId::new("search_tool"), NodeKind::Tool(Default::default()));
+        kinds.insert(VertexId::new("router"), NodeKind::Router(Default::default()));
+        kinds.insert(VertexId::new("parallel_split"), NodeKind::FanOut(Default::default()));
+        kinds.insert(VertexId::new("merge_results"), NodeKind::FanIn(Default::default()));
+
+        let mermaid = runtime.to_mermaid_with_kinds(&kinds);
+        println!("=== Node Kinds Diagram ===\n{}", mermaid);
+
+        // Verify different shapes
+        assert!(mermaid.contains("[planner]"));       // Agent: rectangle
+        assert!(mermaid.contains("[[search_tool]]")); // Tool: subroutine
+        assert!(mermaid.contains("{router}"));        // Router: diamond
+        assert!(mermaid.contains("[/parallel_split\\]")); // FanOut: parallelogram
+        assert!(mermaid.contains("[\\merge_results/]"));  // FanIn: reverse para
+    }
+
+    #[test]
+    fn test_to_mermaid_research_workflow() {
+        use std::sync::Arc;
+        use crate::workflow::NodeKind;
+
+        // Create a realistic research workflow
+        let mut runtime = PregelRuntime::<TestState, WorkflowMessage>::new();
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("orchestrator"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("planner"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("router"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("researcher"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("web_search"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("synthesizer"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("report_writer"), increment: 0 }))
+            .set_entry("orchestrator")
+            .add_edge("orchestrator", "planner")
+            .add_edge("planner", "router")
+            .add_edge("router", "researcher")
+            .add_edge("router", "synthesizer")
+            .add_edge("researcher", "web_search")
+            .add_edge("web_search", "synthesizer")
+            .add_edge("synthesizer", "report_writer");
+
+        let mut kinds = HashMap::new();
+        kinds.insert(VertexId::new("orchestrator"), NodeKind::Agent(Default::default()));
+        kinds.insert(VertexId::new("planner"), NodeKind::Agent(Default::default()));
+        kinds.insert(VertexId::new("router"), NodeKind::Router(Default::default()));
+        kinds.insert(VertexId::new("researcher"), NodeKind::SubAgent(Default::default()));
+        kinds.insert(VertexId::new("web_search"), NodeKind::Tool(Default::default()));
+        kinds.insert(VertexId::new("synthesizer"), NodeKind::Agent(Default::default()));
+        kinds.insert(VertexId::new("report_writer"), NodeKind::Agent(Default::default()));
+
+        let mermaid = runtime.to_mermaid_with_state_and_kinds(&kinds);
+        println!("=== Research Workflow Diagram ===\n{}", mermaid);
+
+        // Verify it's valid mermaid
+        assert!(mermaid.starts_with("graph TD"));
+        assert!(mermaid.contains("orchestrator"));
+        assert!(mermaid.contains("classDef"));
+    }
+
+    #[test]
+    fn test_log_state_output() {
+        use std::sync::Arc;
+
+        let mut runtime = PregelRuntime::<TestState, WorkflowMessage>::new();
+
+        runtime
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("node_a"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("node_b"), increment: 0 }))
+            .add_vertex(Arc::new(IncrementVertex { id: VertexId::new("node_c"), increment: 0 }))
+            .set_entry("node_a")
+            .add_edge("node_a", "node_b")
+            .add_edge("node_b", "node_c");
+
+        println!("=== Terminal State Log ===");
+        runtime.log_state(0);
+        // Visual inspection - should show:
+        // [Superstep 0]
+        //   ▶ node_a : Active
+        //   ⏸ node_b : Halted (or Active in MessageBased)
+        //   ⏸ node_c : Halted
     }
 }

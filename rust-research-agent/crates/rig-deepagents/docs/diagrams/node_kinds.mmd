@@ -1,0 +1,11 @@
+graph TD
+    planner[planner]
+    search_tool[[search_tool]]
+    router{router}
+    parallel_split[/parallel_split\]
+    merge_results[\merge_results/]
+
+    planner --> search_tool
+    search_tool --> router
+    router --> parallel_split
+    parallel_split --> merge_results

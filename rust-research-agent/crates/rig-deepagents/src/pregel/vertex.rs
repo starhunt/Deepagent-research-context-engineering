@@ -13,13 +13,18 @@ use super::error::PregelError;
 use super::message::VertexMessage;
 
 /// Unique identifier for a vertex in the workflow graph
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct VertexId(pub String);
 
 impl VertexId {
     /// Create a new VertexId
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
+    }
+
+    /// Get the ID as a string slice
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 

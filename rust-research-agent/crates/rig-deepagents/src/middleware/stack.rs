@@ -98,6 +98,10 @@ impl MiddlewareStack {
             StateUpdate::AddMessages(msgs) => {
                 state.messages.extend(msgs.clone());
             }
+            StateUpdate::SetMessages(msgs) => {
+                // Replace entire message history (used by SummarizationMiddleware)
+                state.messages = msgs.clone();
+            }
             StateUpdate::SetTodos(todos) => {
                 state.todos = todos.clone();
             }

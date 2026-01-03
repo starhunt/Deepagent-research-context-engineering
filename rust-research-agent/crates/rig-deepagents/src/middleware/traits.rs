@@ -16,6 +16,8 @@ use crate::runtime::ToolRuntime;
 pub enum StateUpdate {
     /// 메시지 추가
     AddMessages(Vec<Message>),
+    /// 메시지 전체 교체 (SummarizationMiddleware 용)
+    SetMessages(Vec<Message>),
     /// Todo 업데이트
     SetTodos(Vec<Todo>),
     /// 파일 업데이트 (None = 삭제)

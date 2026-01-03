@@ -31,8 +31,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rig::client::{CompletionClient, ProviderClient};
+
+use crate::compat::RigAgentAdapter;
 use crate::error::DeepAgentError;
-use crate::llm::{LLMConfig, LLMProvider, OpenAIProvider};
+use crate::llm::{LLMConfig, LLMProvider};
 use crate::middleware::{Tool, ToolDefinition};
 use crate::pregel::config::ExecutionMode;
 use crate::pregel::PregelConfig;
@@ -216,6 +219,9 @@ impl ProductionConfig {
 
     /// Create the LLM provider based on configuration
     ///
+    /// Uses `RigAgentAdapter` to wrap Rig's native providers for full
+    /// compatibility with rig-deepagents' middleware system.
+    ///
     /// # Environment Variables
     ///
     /// - `OPENAI_API_KEY` - Required for OpenAI provider
@@ -223,19 +229,20 @@ impl ProductionConfig {
     pub fn llm_provider(&self) -> Result<Arc<dyn LLMProvider>, DeepAgentError> {
         match self.llm_provider_type {
             LLMProviderType::OpenAI => {
-                let provider = match &self.model {
-                    Some(model) => OpenAIProvider::from_env_with_model(model)?,
-                    None => OpenAIProvider::from_env()?,
-                };
-                Ok(Arc::new(provider))
+                let client = rig::providers::openai::Client::from_env();
+                let model = self.model.clone().unwrap_or_else(|| "gpt-4.1".to_string());
+                let agent = client.agent(&model).build();
+                let adapter = RigAgentAdapter::with_names(agent, "openai", &model);
+                Ok(Arc::new(adapter))
             }
             LLMProviderType::Anthropic => {
-                use crate::llm::AnthropicProvider;
-                let provider = match &self.model {
-                    Some(model) => AnthropicProvider::from_env_with_model(model)?,
-                    None => AnthropicProvider::from_env()?,
-                };
-                Ok(Arc::new(provider))
+                let client = rig::providers::anthropic::Client::from_env();
+                let model = self.model.clone().unwrap_or_else(|| {
+                    rig::providers::anthropic::completion::CLAUDE_3_5_SONNET.to_string()
+                });
+                let agent = client.agent(&model).build();
+                let adapter = RigAgentAdapter::with_names(agent, "anthropic", &model);
+                Ok(Arc::new(adapter))
             }
         }
     }

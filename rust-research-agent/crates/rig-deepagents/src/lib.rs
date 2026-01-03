@@ -5,23 +5,26 @@
 //! - Backend 트레이트: 파일시스템 추상화
 //! - MiddlewareStack: 미들웨어 조합 및 실행
 //! - AgentExecutor: LLM 호출 및 도구 실행 루프
-//! - LLMProvider: Provider-agnostic LLM abstraction (OpenAI, Anthropic)
+//! - RigAgentAdapter: Rig Agent를 LLMProvider로 사용
 //!
 //! # LLM Providers
 //!
-//! The library provides a unified interface for LLM providers:
+//! Use `RigAgentAdapter` to wrap Rig's native providers:
 //!
 //! ```rust,ignore
-//! use rig_deepagents::{OpenAIProvider, AnthropicProvider, LLMProvider};
+//! use rig::providers::openai::Client;
+//! use rig::client::{CompletionClient, ProviderClient};
+//! use rig_deepagents::{RigAgentAdapter, LLMProvider, AgentExecutor};
 //!
-//! // OpenAI (from OPENAI_API_KEY env var)
-//! let openai = OpenAIProvider::from_env()?;
+//! // Create Rig agent
+//! let client = Client::from_env();
+//! let agent = client.agent("gpt-4").build();
 //!
-//! // Anthropic (from ANTHROPIC_API_KEY env var)
-//! let anthropic = AnthropicProvider::from_env()?;
+//! // Wrap in adapter
+//! let provider = RigAgentAdapter::new(agent);
 //!
 //! // Use with AgentExecutor
-//! let executor = AgentExecutor::new(Arc::new(openai), middleware, backend);
+//! let executor = AgentExecutor::new(Arc::new(provider), middleware, backend);
 //! ```
 
 pub mod error;
@@ -37,6 +40,7 @@ pub mod workflow;
 pub mod skills;
 pub mod research;
 pub mod config;
+pub mod compat;
 
 // Re-exports for convenience
 pub use error::{BackendError, MiddlewareError, DeepAgentError, WriteResult, EditResult};
@@ -72,6 +76,8 @@ pub use config::{ProductionConfig, ProductionSetup, LLMProviderType};
 pub use llm::{
     LLMProvider, LLMResponse, LLMResponseStream, MessageChunk,
     LLMConfig, TokenUsage,
-    OpenAIProvider, AnthropicProvider,
     MessageConverter, ToolConverter, convert_messages, convert_tools,
 };
+
+// Rig compatibility layer exports
+pub use compat::{RigToolAdapter, RigAgentAdapter};

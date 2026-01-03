@@ -127,7 +127,12 @@ impl<S: WorkflowState + Serialize> CompiledWorkflow<S> {
     /// # Example
     ///
     /// ```ignore
-    /// let llm = Arc::new(OpenAIProvider::from_env()?);
+    /// use rig::client::{CompletionClient, ProviderClient};
+    /// use rig_deepagents::RigAgentAdapter;
+    ///
+    /// let client = rig::providers::openai::Client::from_env();
+    /// let agent = client.agent("gpt-4").build();
+    /// let llm = Arc::new(RigAgentAdapter::new(agent));
     /// let tools = vec![TavilySearchTool::from_env()?.definition()];
     ///
     /// let workflow = CompiledWorkflow::compile_with_tools(
@@ -158,10 +163,14 @@ impl<S: WorkflowState + Serialize> CompiledWorkflow<S> {
     /// # Example
     ///
     /// ```ignore
+    /// use rig::client::{CompletionClient, ProviderClient};
     /// use rig_deepagents::middleware::{ToolRegistry, DynTool};
     /// use rig_deepagents::tools::{TavilySearchTool, ThinkTool};
+    /// use rig_deepagents::RigAgentAdapter;
     ///
-    /// let llm = Arc::new(OpenAIProvider::from_env()?);
+    /// let client = rig::providers::openai::Client::from_env();
+    /// let agent = client.agent("gpt-4").build();
+    /// let llm = Arc::new(RigAgentAdapter::new(agent));
     ///
     /// let mut registry = ToolRegistry::new();
     /// registry.register(Arc::new(TavilySearchTool::from_env()?));

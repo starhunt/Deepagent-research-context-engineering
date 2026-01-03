@@ -23,9 +23,12 @@ use crate::state::{AgentState, Message, ToolCall};
 /// # Example
 ///
 /// ```rust,ignore
-/// use rig_deepagents::{AgentExecutor, OpenAIProvider, MiddlewareStack};
+/// use rig::client::{CompletionClient, ProviderClient};
+/// use rig_deepagents::{AgentExecutor, RigAgentAdapter, MiddlewareStack};
 ///
-/// let provider = Arc::new(OpenAIProvider::from_env()?);
+/// let client = rig::providers::openai::Client::from_env();
+/// let agent = client.agent("gpt-4").build();
+/// let provider = Arc::new(RigAgentAdapter::new(agent));
 /// let executor = AgentExecutor::new(provider, MiddlewareStack::new(), backend);
 /// let result = executor.run(initial_state).await?;
 /// ```

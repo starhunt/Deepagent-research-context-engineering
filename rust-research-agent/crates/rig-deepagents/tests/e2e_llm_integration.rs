@@ -15,8 +15,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use rig::client::{CompletionClient, ProviderClient};
+
 use rig_deepagents::{
-    OpenAIProvider, LLMProvider, LLMConfig,
+    RigAgentAdapter, LLMProvider, LLMConfig,
     ProductionConfig, ProductionSetup,
     ResearchState, ResearchPhase,
     TavilySearchTool, ThinkTool,
@@ -39,6 +41,13 @@ fn has_tavily_key() -> bool {
     std::env::var("TAVILY_API_KEY").is_ok()
 }
 
+/// Create a RigAgentAdapter for OpenAI
+fn create_openai_provider(model: &str) -> impl LLMProvider {
+    let client = rig::providers::openai::Client::from_env();
+    let agent = client.agent(model).build();
+    RigAgentAdapter::with_names(agent, "openai", model)
+}
+
 /// Test basic LLM completion without tools
 #[tokio::test]
 #[ignore = "Requires OPENAI_API_KEY environment variable"]
@@ -48,8 +57,7 @@ async fn test_openai_basic_completion() {
         return;
     }
 
-    let provider = OpenAIProvider::from_env()
-        .expect("Failed to create OpenAI provider");
+    let provider = create_openai_provider("gpt-4o-mini");
 
     let messages = vec![
         Message::system("You are a helpful assistant. Be concise."),
@@ -78,8 +86,7 @@ async fn test_openai_with_tool_definitions() {
         return;
     }
 
-    let provider = OpenAIProvider::from_env()
-        .expect("Failed to create OpenAI provider");
+    let provider = create_openai_provider("gpt-4o-mini");
 
     let think_tool = ThinkTool;
     let tool_defs = vec![think_tool.definition()];
@@ -191,10 +198,7 @@ async fn test_simple_agent_workflow() {
         return;
     }
 
-    let llm = Arc::new(
-        OpenAIProvider::from_env_with_model("gpt-4o-mini")
-            .expect("Failed to create OpenAI provider")
-    );
+    let llm: Arc<dyn LLMProvider> = Arc::new(create_openai_provider("gpt-4o-mini"));
 
     // Create a simple workflow: single agent node
     let agent_config = AgentNodeConfig {
@@ -324,8 +328,7 @@ async fn test_token_usage_tracking() {
         return;
     }
 
-    let provider = OpenAIProvider::from_env()
-        .expect("Failed to create OpenAI provider");
+    let provider = create_openai_provider("gpt-4o-mini");
 
     let messages = vec![
         Message::system("You are concise."),
@@ -370,8 +373,7 @@ async fn test_invalid_api_key_error() {
     // Set an invalid key temporarily
     std::env::set_var("OPENAI_API_KEY", "sk-invalid-key-for-testing");
 
-    let provider = OpenAIProvider::from_env()
-        .expect("Should create provider with invalid key");
+    let provider = create_openai_provider("gpt-4o-mini");
 
     let messages = vec![Message::user("test")];
 

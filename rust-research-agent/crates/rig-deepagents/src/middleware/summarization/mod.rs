@@ -16,13 +16,16 @@
 //! # Example
 //!
 //! ```rust,ignore
+//! use rig::client::{CompletionClient, ProviderClient};
 //! use rig_deepagents::middleware::summarization::{
 //!     SummarizationMiddleware, SummarizationConfig, TriggerCondition, KeepSize
 //! };
-//! use rig_deepagents::llm::OpenAIProvider;
+//! use rig_deepagents::RigAgentAdapter;
 //! use std::sync::Arc;
 //!
-//! let provider = Arc::new(OpenAIProvider::new("your-api-key"));
+//! let client = rig::providers::openai::Client::from_env();
+//! let agent = client.agent("gpt-4").build();
+//! let provider = Arc::new(RigAgentAdapter::new(agent));
 //!
 //! let config = SummarizationConfig::builder()
 //!     .trigger(TriggerCondition::Fraction(0.85))

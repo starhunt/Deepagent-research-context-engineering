@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::state::AgentState;
 use crate::error::MiddlewareError;
 use crate::runtime::ToolRuntime;
-use super::traits::{AgentMiddleware, DynTool, StateUpdate};
+use super::traits::{AgentMiddleware, DynTool, StateUpdate, ModelRequest, ModelResponse, ModelControl};
 
 /// 미들웨어 스택
 pub struct MiddlewareStack {
@@ -90,6 +90,94 @@ impl MiddlewareStack {
         }
 
         Ok(updates)
+    }
+
+    // =========================================================================
+    // Model Call Hooks
+    // =========================================================================
+
+    /// before_model 훅 실행 (순차, 앞에서 뒤로)
+    ///
+    /// 각 미들웨어의 `before_model` 훅을 순차적으로 호출합니다.
+    /// 미들웨어는 요청을 수정하거나, LLM 호출을 건너뛰거나, 인터럽트를 발생시킬 수 있습니다.
+    ///
+    /// # Returns
+    ///
+    /// - `ModelControl::Continue` - 모든 미들웨어가 Continue 반환
+    /// - `ModelControl::ModifyRequest` - 마지막 수정된 요청 (request가 이미 수정됨)
+    /// - `ModelControl::Skip(resp)` - LLM 호출 건너뛰기
+    /// - `ModelControl::Interrupt(req)` - 실행 인터럽트
+    pub async fn before_model(
+        &self,
+        request: &mut ModelRequest,
+        state: &AgentState,
+        runtime: &ToolRuntime,
+    ) -> Result<ModelControl, MiddlewareError> {
+        for middleware in &self.middlewares {
+            match middleware.before_model(request, state, runtime).await? {
+                ModelControl::Continue => continue,
+                ModelControl::ModifyRequest(new_req) => {
+                    // 요청 수정 후 계속 진행
+                    *request = new_req;
+                }
+                control @ ModelControl::Skip(_) => {
+                    // LLM 호출 건너뛰기 - 즉시 반환
+                    tracing::debug!(
+                        middleware = middleware.name(),
+                        "Middleware skipping model call"
+                    );
+                    return Ok(control);
+                }
+                control @ ModelControl::Interrupt(_) => {
+                    // 인터럽트 - 즉시 반환
+                    tracing::info!(
+                        middleware = middleware.name(),
+                        "Middleware triggering interrupt in before_model"
+                    );
+                    return Ok(control);
+                }
+            }
+        }
+        Ok(ModelControl::Continue)
+    }
+
+    /// after_model 훅 실행 (역순, 뒤에서 앞으로)
+    ///
+    /// 각 미들웨어의 `after_model` 훅을 역순으로 호출합니다.
+    /// 주로 HumanInTheLoop 인터럽트를 발생시키는 데 사용됩니다.
+    ///
+    /// # Returns
+    ///
+    /// - `ModelControl::Continue` - 모든 미들웨어가 Continue 반환
+    /// - `ModelControl::Interrupt(req)` - 인간 승인 대기
+    pub async fn after_model(
+        &self,
+        response: &ModelResponse,
+        state: &AgentState,
+        runtime: &ToolRuntime,
+    ) -> Result<ModelControl, MiddlewareError> {
+        for middleware in self.middlewares.iter().rev() {
+            match middleware.after_model(response, state, runtime).await? {
+                ModelControl::Continue => continue,
+                control @ ModelControl::Interrupt(_) => {
+                    // 인터럽트 - 즉시 반환
+                    tracing::info!(
+                        middleware = middleware.name(),
+                        "Middleware triggering interrupt in after_model"
+                    );
+                    return Ok(control);
+                }
+                // Skip과 ModifyRequest는 after_model에서 의미 없음 - 무시
+                ModelControl::Skip(_) | ModelControl::ModifyRequest(_) => {
+                    tracing::warn!(
+                        middleware = middleware.name(),
+                        "Skip/ModifyRequest ignored in after_model (only valid in before_model)"
+                    );
+                    continue;
+                }
+            }
+        }
+        Ok(ModelControl::Continue)
     }
 
     /// 상태 업데이트 적용

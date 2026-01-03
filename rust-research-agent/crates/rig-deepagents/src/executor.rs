@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::backends::Backend;
 use crate::error::DeepAgentError;
 use crate::llm::{LLMProvider, LLMConfig};
-use crate::middleware::{MiddlewareStack, DynTool};
+use crate::middleware::{MiddlewareStack, DynTool, ModelRequest, ModelResponse, ModelControl};
 use crate::runtime::{RuntimeConfig, ToolRuntime};
 use crate::state::{AgentState, Message, ToolCall};
 
@@ -143,14 +143,75 @@ impl AgentExecutor {
         for iteration in 0..self.max_iterations {
             tracing::debug!(iteration, "Agent iteration");
 
-            // LLM 호출 (using new LLMProvider interface)
-            let llm_response = self.llm.complete(
-                &state.messages,
-                &tool_definitions,
-                self.config.as_ref(),
-            ).await?;
+            // =========================================================================
+            // before_model hook
+            // =========================================================================
+            let mut model_request = ModelRequest::new(
+                state.messages.clone(),
+                tool_definitions.clone(),
+            );
+            if let Some(ref config) = self.config {
+                model_request = model_request.with_config(config.clone());
+            }
 
-            let response = llm_response.message;
+            let before_control = self.middleware.before_model(&mut model_request, &state, &runtime).await
+                .map_err(DeepAgentError::Middleware)?;
+
+            // before_model 제어 흐름 처리
+            let response = match before_control {
+                ModelControl::Continue => {
+                    // 정상 LLM 호출
+                    let llm_response = self.llm.complete(
+                        &model_request.messages,
+                        &model_request.tools,
+                        model_request.config.as_ref(),
+                    ).await?;
+                    llm_response.message
+                }
+                ModelControl::ModifyRequest(_) => {
+                    // 요청이 이미 수정됨, 수정된 요청으로 LLM 호출
+                    let llm_response = self.llm.complete(
+                        &model_request.messages,
+                        &model_request.tools,
+                        model_request.config.as_ref(),
+                    ).await?;
+                    llm_response.message
+                }
+                ModelControl::Skip(resp) => {
+                    // LLM 호출 건너뛰기, 제공된 응답 사용
+                    tracing::debug!("Skipping LLM call, using cached response");
+                    resp.message
+                }
+                ModelControl::Interrupt(interrupt) => {
+                    // 인터럽트 - 실행 중단
+                    tracing::info!("Execution interrupted in before_model");
+                    return Err(DeepAgentError::Interrupt(interrupt));
+                }
+            };
+
+            // =========================================================================
+            // after_model hook
+            // =========================================================================
+            let model_response = ModelResponse::new(response.clone());
+            let after_control = self.middleware.after_model(&model_response, &state, &runtime).await
+                .map_err(DeepAgentError::Middleware)?;
+
+            // after_model 제어 흐름 처리
+            match after_control {
+                ModelControl::Continue => {
+                    // 정상 진행
+                }
+                ModelControl::Interrupt(interrupt) => {
+                    // HumanInTheLoop 인터럽트 - 응답 저장 후 중단
+                    state.add_message(response.clone());
+                    tracing::info!("Execution interrupted in after_model (HumanInTheLoop)");
+                    return Err(DeepAgentError::Interrupt(interrupt));
+                }
+                _ => {
+                    // Skip/ModifyRequest는 after_model에서 무시됨
+                }
+            }
+
             state.add_message(response.clone());
 
             // 도구 호출이 없으면 종료

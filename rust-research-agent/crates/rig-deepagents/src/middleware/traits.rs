@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::state::{AgentState, Message, Todo, FileData};
 use crate::error::MiddlewareError;
 use crate::runtime::ToolRuntime;
+use crate::llm::{LLMConfig, TokenUsage};
 
 /// 상태 업데이트 커맨드
 /// Python: langgraph.types.Command
@@ -24,6 +25,184 @@ pub enum StateUpdate {
     UpdateFiles(HashMap<String, Option<FileData>>),
     /// 복합 업데이트
     Batch(Vec<StateUpdate>),
+}
+
+// ============================================================================
+// Model Hook Types (Python: langchain/agents/middleware/types.py)
+// ============================================================================
+
+/// Model 호출 요청 컨텍스트
+///
+/// LLM 호출 전에 미들웨어가 검사하고 수정할 수 있는 요청 정보.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let request = ModelRequest::new(messages, tools)
+///     .with_config(LLMConfig::default());
+/// ```
+#[derive(Debug, Clone)]
+pub struct ModelRequest {
+    /// 현재 대화 메시지
+    pub messages: Vec<Message>,
+    /// 사용 가능한 도구 정의
+    pub tools: Vec<ToolDefinition>,
+    /// LLM 설정 (온도, max_tokens 등)
+    pub config: Option<LLMConfig>,
+}
+
+impl ModelRequest {
+    /// 새 ModelRequest 생성
+    pub fn new(messages: Vec<Message>, tools: Vec<ToolDefinition>) -> Self {
+        Self { messages, tools, config: None }
+    }
+
+    /// LLM 설정 추가
+    pub fn with_config(mut self, config: LLMConfig) -> Self {
+        self.config = Some(config);
+        self
+    }
+}
+
+/// Model 호출 응답
+///
+/// LLM 호출 후 미들웨어가 검사할 수 있는 응답 정보.
+#[derive(Debug, Clone)]
+pub struct ModelResponse {
+    /// LLM이 생성한 메시지
+    pub message: Message,
+    /// 토큰 사용량 (있는 경우)
+    pub usage: Option<TokenUsage>,
+}
+
+impl ModelResponse {
+    /// 새 ModelResponse 생성
+    pub fn new(message: Message) -> Self {
+        Self { message, usage: None }
+    }
+
+    /// 토큰 사용량 추가
+    pub fn with_usage(mut self, usage: TokenUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+}
+
+/// Model hook 제어 흐름
+///
+/// 미들웨어가 model 호출 전후에 실행 흐름을 제어할 수 있게 합니다.
+#[derive(Debug, Default)]
+pub enum ModelControl {
+    /// 정상적으로 다음 단계 진행
+    #[default]
+    Continue,
+    /// 요청을 수정하고 계속 진행
+    ModifyRequest(ModelRequest),
+    /// Model 호출을 건너뛰고 이 응답 사용 (캐싱용)
+    Skip(ModelResponse),
+    /// 실행을 인터럽트하고 인간 승인 대기 (HumanInTheLoop)
+    Interrupt(InterruptRequest),
+}
+
+// ============================================================================
+// Human-in-the-Loop Types
+// ============================================================================
+
+/// 인간 승인을 위한 인터럽트 요청
+///
+/// HumanInTheLoopMiddleware가 특정 도구 호출에 대해 승인을 요청할 때 사용.
+#[derive(Debug, Clone)]
+pub struct InterruptRequest {
+    /// 승인이 필요한 액션 목록
+    pub action_requests: Vec<ActionRequest>,
+    /// 각 액션에 대한 리뷰 설정
+    pub review_configs: Vec<ReviewConfig>,
+}
+
+impl InterruptRequest {
+    /// 새 InterruptRequest 생성
+    pub fn new(action_requests: Vec<ActionRequest>, review_configs: Vec<ReviewConfig>) -> Self {
+        Self { action_requests, review_configs }
+    }
+
+    /// 단일 액션으로 InterruptRequest 생성
+    pub fn single(action: ActionRequest, config: ReviewConfig) -> Self {
+        Self {
+            action_requests: vec![action],
+            review_configs: vec![config],
+        }
+    }
+}
+
+/// 승인이 필요한 개별 액션
+#[derive(Debug, Clone)]
+pub struct ActionRequest {
+    /// 도구 호출 ID
+    pub id: String,
+    /// 도구 이름
+    pub name: String,
+    /// 도구 인자
+    pub args: serde_json::Value,
+    /// 사용자에게 보여줄 설명 (선택)
+    pub description: Option<String>,
+}
+
+impl ActionRequest {
+    /// 새 ActionRequest 생성
+    pub fn new(id: impl Into<String>, name: impl Into<String>, args: serde_json::Value) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            args,
+            description: None,
+        }
+    }
+
+    /// 설명 추가
+    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+}
+
+/// 리뷰 설정
+#[derive(Debug, Clone)]
+pub struct ReviewConfig {
+    /// 대상 액션 이름
+    pub action_name: String,
+    /// 허용되는 결정 유형
+    pub allowed_decisions: Vec<Decision>,
+}
+
+impl ReviewConfig {
+    /// 새 ReviewConfig 생성
+    pub fn new(action_name: impl Into<String>, allowed_decisions: Vec<Decision>) -> Self {
+        Self {
+            action_name: action_name.into(),
+            allowed_decisions,
+        }
+    }
+
+    /// 모든 결정 허용
+    pub fn allow_all(action_name: impl Into<String>) -> Self {
+        Self::new(action_name, vec![Decision::Approve, Decision::Reject, Decision::Edit])
+    }
+
+    /// 승인/거부만 허용
+    pub fn approve_reject_only(action_name: impl Into<String>) -> Self {
+        Self::new(action_name, vec![Decision::Approve, Decision::Reject])
+    }
+}
+
+/// 사용자 결정 유형
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Decision {
+    /// 액션 승인
+    Approve,
+    /// 액션 거부
+    Reject,
+    /// 액션 수정 후 실행
+    Edit,
 }
 
 /// 도구 정의
@@ -140,7 +319,31 @@ impl std::fmt::Debug for ToolRegistry {
 /// 핵심 기능:
 /// - tools(): 에이전트에 자동 주입할 도구 목록 반환
 /// - modify_system_prompt(): 시스템 프롬프트 수정 (체이닝)
-/// - before_agent() / after_agent(): 라이프사이클 훅
+/// - before_agent() / after_agent(): 에이전트 라이프사이클 훅
+/// - before_model() / after_model(): LLM 호출 전후 훅 (NEW)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use rig_deepagents::middleware::{AgentMiddleware, ModelControl, ModelRequest, ModelResponse};
+///
+/// struct LoggingMiddleware;
+///
+/// #[async_trait]
+/// impl AgentMiddleware for LoggingMiddleware {
+///     fn name(&self) -> &str { "logging" }
+///
+///     async fn before_model(&self, request: &mut ModelRequest, ...) -> Result<ModelControl, _> {
+///         tracing::info!("Calling LLM with {} messages", request.messages.len());
+///         Ok(ModelControl::Continue)
+///     }
+///
+///     async fn after_model(&self, response: &ModelResponse, ...) -> Result<ModelControl, _> {
+///         tracing::info!("LLM responded with: {:?}", response.message.role);
+///         Ok(ModelControl::Continue)
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait AgentMiddleware: Send + Sync {
     /// 미들웨어 이름
@@ -156,7 +359,12 @@ pub trait AgentMiddleware: Send + Sync {
         prompt
     }
 
-    /// 에이전트 실행 전 훅
+    // =========================================================================
+    // Agent Lifecycle Hooks
+    // =========================================================================
+
+    /// 에이전트 실행 전 훅 - 전체 에이전트 루프 시작 전에 호출
+    ///
     /// Python: before_agent(self, state, runtime) -> dict | None
     async fn before_agent(
         &self,
@@ -166,7 +374,8 @@ pub trait AgentMiddleware: Send + Sync {
         Ok(None)
     }
 
-    /// 에이전트 실행 후 훅
+    /// 에이전트 실행 후 훅 - 전체 에이전트 루프 완료 후에 호출
+    ///
     /// Python: after_agent(self, state, runtime) -> dict | None
     async fn after_agent(
         &self,
@@ -174,6 +383,52 @@ pub trait AgentMiddleware: Send + Sync {
         _runtime: &ToolRuntime,
     ) -> Result<Option<StateUpdate>, MiddlewareError> {
         Ok(None)
+    }
+
+    // =========================================================================
+    // Model Call Hooks (NEW - Python Parity)
+    // =========================================================================
+
+    /// LLM 호출 전 훅 - 각 LLM 호출 직전에 실행
+    ///
+    /// 사용 사례:
+    /// - 메시지/도구 수정 (`ModelControl::ModifyRequest`)
+    /// - 캐시된 응답 반환 (`ModelControl::Skip`)
+    /// - 요청 로깅/모니터링
+    ///
+    /// # Returns
+    ///
+    /// - `ModelControl::Continue` - 정상 진행
+    /// - `ModelControl::ModifyRequest(req)` - 수정된 요청으로 진행
+    /// - `ModelControl::Skip(resp)` - LLM 호출 건너뛰고 이 응답 사용
+    /// - `ModelControl::Interrupt(req)` - 실행 인터럽트
+    async fn before_model(
+        &self,
+        _request: &mut ModelRequest,
+        _state: &AgentState,
+        _runtime: &ToolRuntime,
+    ) -> Result<ModelControl, MiddlewareError> {
+        Ok(ModelControl::Continue)
+    }
+
+    /// LLM 호출 후 훅 - 각 LLM 응답 수신 직후에 실행
+    ///
+    /// 사용 사례:
+    /// - HumanInTheLoop 인터럽트 (`ModelControl::Interrupt`)
+    /// - 응답 검사/로깅
+    /// - 응답 기반 조건부 처리
+    ///
+    /// # Returns
+    ///
+    /// - `ModelControl::Continue` - 정상 진행
+    /// - `ModelControl::Interrupt(req)` - 인간 승인 대기
+    async fn after_model(
+        &self,
+        _response: &ModelResponse,
+        _state: &AgentState,
+        _runtime: &ToolRuntime,
+    ) -> Result<ModelControl, MiddlewareError> {
+        Ok(ModelControl::Continue)
     }
 }
 

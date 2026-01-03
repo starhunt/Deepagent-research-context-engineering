@@ -90,6 +90,13 @@ pub enum DeepAgentError {
 
     #[error("Message conversion error: {0}")]
     Conversion(String),
+
+    /// HumanInTheLoop 인터럽트 - 인간 승인 대기
+    ///
+    /// 이 에러는 실제 실패가 아니라 실행 일시 중단을 나타냅니다.
+    /// 사용자가 결정을 제공하면 실행을 재개할 수 있습니다.
+    #[error("Execution interrupted for human approval")]
+    Interrupt(crate::middleware::InterruptRequest),
 }
 
 /// 쓰기 작업 결과

@@ -6,15 +6,25 @@
 //!
 //! - [`subagent`]: SubAgent delegation middleware (task tool, registry, execution)
 //! - [`summarization`]: Token budget management and context summarization
+//! - [`patch_tool_calls`]: Fix dangling tool calls in message history
+//! - [`human_in_the_loop`]: Interrupt execution for human approval
 
 pub mod traits;
 pub mod stack;
 pub mod subagent;
 pub mod summarization;
+pub mod patch_tool_calls;
+pub mod human_in_the_loop;
 
 // Core traits and types
 pub use traits::{AgentMiddleware, DynTool, Tool, ToolDefinition, ToolRegistry, StateUpdate};
 pub use stack::MiddlewareStack;
+
+// Model hook types (Python Parity - NEW)
+pub use traits::{
+    ModelRequest, ModelResponse, ModelControl,
+    InterruptRequest, ActionRequest, ReviewConfig, Decision,
+};
 
 // Summarization middleware
 pub use summarization::{
@@ -36,3 +46,9 @@ pub use subagent::{
     // Middleware
     SubAgentMiddleware, SubAgentMiddlewareConfig, SubAgentMiddlewareBuilder,
 };
+
+// PatchToolCalls middleware (Python Parity - NEW)
+pub use patch_tool_calls::PatchToolCallsMiddleware;
+
+// HumanInTheLoop middleware (Python Parity - NEW)
+pub use human_in_the_loop::{HumanInTheLoopMiddleware, InterruptOnConfig};

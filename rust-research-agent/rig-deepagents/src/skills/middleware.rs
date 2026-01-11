@@ -11,8 +11,9 @@ use tokio::sync::RwLock;
 use super::loader::SkillLoader;
 use super::types::{SkillMetadata, SkillSource};
 use crate::error::MiddlewareError;
-use crate::middleware::{AgentMiddleware, DynTool, Tool, ToolDefinition, ToolResult};
+use crate::middleware::{AgentMiddleware, DynTool, Tool, ToolDefinition, ToolResult, StateUpdate};
 use crate::runtime::ToolRuntime;
+use crate::state::AgentState;
 
 /// Skills middleware for progressive skill disclosure
 ///
@@ -125,6 +126,16 @@ impl AgentMiddleware for SkillsMiddleware {
             Some(section) => format!("{}{}", prompt, section),
             None => prompt,
         }
+    }
+
+    async fn before_agent(
+        &self,
+        _state: &mut AgentState,
+        _runtime: &ToolRuntime,
+    ) -> Result<Option<StateUpdate>, MiddlewareError> {
+        self.loader.initialize().await?;
+        self.refresh_cache().await;
+        Ok(None)
     }
 }
 

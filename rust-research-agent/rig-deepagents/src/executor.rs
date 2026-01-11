@@ -167,7 +167,7 @@ impl AgentExecutor {
                 model_request = model_request.with_config(config.clone());
             }
 
-            let before_control = self.middleware.before_model(&mut model_request, &state, &runtime).await
+            let before_control = self.middleware.before_model(&mut model_request, &mut state, &runtime).await
                 .map_err(DeepAgentError::Middleware)?;
 
             // before_model 제어 흐름 처리
@@ -235,7 +235,22 @@ impl AgentExecutor {
 
             // 도구 호출 처리
             if let Some(tool_calls) = &response.tool_calls {
+                let write_todos_count = tool_calls
+                    .iter()
+                    .filter(|call| call.name == "write_todos")
+                    .count();
+                let has_duplicate_write_todos = write_todos_count > 1;
+
                 for call in tool_calls {
+                    if has_duplicate_write_todos && call.name == "write_todos" {
+                        let result = ToolResult::new(
+                            "Error: multiple write_todos calls in a single response are not allowed",
+                        );
+                        let tool_message = Message::tool_with_status(&result.message, &call.id, "error");
+                        state.add_message(tool_message);
+                        continue;
+                    }
+
                     let result = self
                         .execute_tool_call(call, &tools, &state, runtime.config())
                         .await;
@@ -453,6 +468,54 @@ mod tests {
 
         assert_eq!(result.todos.len(), 1);
         assert_eq!(result.todos[0].content, "Test todo");
+    }
+
+    #[tokio::test]
+    async fn test_executor_rejects_duplicate_write_todos() {
+        let tool_calls = vec![
+            ToolCall {
+                id: "call_1".to_string(),
+                name: "write_todos".to_string(),
+                arguments: serde_json::json!({"todos": []}),
+            },
+            ToolCall {
+                id: "call_2".to_string(),
+                name: "write_todos".to_string(),
+                arguments: serde_json::json!({"todos": []}),
+            },
+        ];
+
+        let responses = vec![
+            Message::assistant_with_tool_calls("", tool_calls),
+            Message::assistant("Done."),
+        ];
+
+        let llm = Arc::new(MockLLM::new(responses));
+        let backend = Arc::new(MemoryBackend::new());
+        let middleware = MiddlewareStack::new();
+
+        let executor = AgentExecutor::new(llm, middleware, backend)
+            .with_tools(vec![Arc::new(crate::tools::WriteTodosTool)]);
+
+        let initial_state = AgentState::with_messages(vec![
+            Message::user("Update todos"),
+        ]);
+
+        let result = executor.run(initial_state).await.unwrap();
+
+        assert!(result.todos.is_empty());
+
+        let tool_messages: Vec<&Message> = result
+            .messages
+            .iter()
+            .filter(|message| message.role == Role::Tool)
+            .collect();
+
+        assert_eq!(tool_messages.len(), 2);
+        for message in tool_messages {
+            assert_eq!(message.status.as_deref(), Some("error"));
+            assert!(message.content.contains("multiple write_todos"));
+        }
     }
 
     #[tokio::test]

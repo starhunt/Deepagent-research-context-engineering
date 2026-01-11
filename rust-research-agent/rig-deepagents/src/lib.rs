@@ -41,6 +41,7 @@ pub mod skills;
 pub mod research;
 pub mod config;
 pub mod compat;
+pub mod tokenization;
 mod tool_result_eviction;
 
 // Re-exports for convenience

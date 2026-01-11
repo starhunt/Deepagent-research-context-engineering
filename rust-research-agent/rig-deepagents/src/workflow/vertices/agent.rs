@@ -228,6 +228,7 @@ impl<S: WorkflowState + serde::Serialize> Vertex<S, WorkflowMessage> for AgentVe
             content: self.config.system_prompt.clone(),
             tool_calls: None,
             tool_call_id: None,
+            status: None,
         }];
 
         // Add any incoming workflow messages as user messages
@@ -238,6 +239,7 @@ impl<S: WorkflowState + serde::Serialize> Vertex<S, WorkflowMessage> for AgentVe
                     content: value.to_string(),
                     tool_calls: None,
                     tool_call_id: None,
+            status: None,
                 });
             }
         }
@@ -249,6 +251,7 @@ impl<S: WorkflowState + serde::Serialize> Vertex<S, WorkflowMessage> for AgentVe
                 content: "Begin processing.".to_string(),
                 tool_calls: None,
                 tool_call_id: None,
+            status: None,
             });
         }
 
@@ -354,6 +357,7 @@ mod tests {
                 content: content.into(),
                 tool_calls: None,
                 tool_call_id: None,
+            status: None,
             };
             self.responses.lock().unwrap().push(message);
             self
@@ -369,6 +373,7 @@ mod tests {
                     arguments: serde_json::json!({}),
                 }]),
                 tool_call_id: None,
+            status: None,
             };
             self.responses.lock().unwrap().push(message);
             self
@@ -563,6 +568,7 @@ mod tests {
             content: "Done".to_string(),
             tool_calls: Some(vec![]),
             tool_call_id: None,
+            status: None,
         };
 
         // State with non-matching phase

@@ -15,32 +15,40 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use super::types::{SkillContent, SkillMetadata, SkillSource};
+use crate::backends::Backend;
 use crate::error::MiddlewareError;
 
-/// Type alias for metadata cache entry (metadata, file path, source)
 type MetadataCacheEntry = (SkillMetadata, PathBuf, SkillSource);
 
-/// Skill loader with caching support
+pub enum SkillStorage {
+    Filesystem {
+        user_dir: Option<PathBuf>,
+        project_dir: Option<PathBuf>,
+    },
+    Backend {
+        backend: Arc<dyn Backend>,
+        sources: Vec<String>,
+    },
+}
+
 pub struct SkillLoader {
-    /// User skills directory (e.g., ~/.claude/skills)
-    user_dir: Option<PathBuf>,
-
-    /// Project skills directory (e.g., ./skills)
-    project_dir: Option<PathBuf>,
-
-    /// Cached metadata (loaded eagerly on init)
+    storage: SkillStorage,
     metadata_cache: Arc<RwLock<HashMap<String, MetadataCacheEntry>>>,
-
-    /// Cached full content (loaded lazily on demand)
     content_cache: Arc<RwLock<HashMap<String, SkillContent>>>,
 }
 
 impl SkillLoader {
-    /// Create a new skill loader with specified directories
     pub fn new(user_dir: Option<PathBuf>, project_dir: Option<PathBuf>) -> Self {
         Self {
-            user_dir,
-            project_dir,
+            storage: SkillStorage::Filesystem { user_dir, project_dir },
+            metadata_cache: Arc::new(RwLock::new(HashMap::new())),
+            content_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn from_backend(backend: Arc<dyn Backend>, sources: Vec<String>) -> Self {
+        Self {
+            storage: SkillStorage::Backend { backend, sources },
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             content_cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -70,18 +78,24 @@ impl SkillLoader {
         let mut cache = self.metadata_cache.write().await;
         cache.clear();
 
-        // Scan user skills first (lower priority)
-        if let Some(user_dir) = &self.user_dir {
-            if user_dir.exists() {
-                self.scan_directory(user_dir, SkillSource::User, &mut cache)
-                    .await?;
-            }
-        }
+        match &self.storage {
+            SkillStorage::Filesystem { user_dir, project_dir } => {
+                if let Some(user_dir) = user_dir {
+                    if user_dir.exists() {
+                        self.scan_directory(user_dir, SkillSource::User, &mut cache)
+                            .await?;
+                    }
+                }
 
-        // Scan project skills (higher priority, can override user skills)
-        if let Some(project_dir) = &self.project_dir {
-            if project_dir.exists() {
-                self.scan_directory(project_dir, SkillSource::Project, &mut cache)
+                if let Some(project_dir) = project_dir {
+                    if project_dir.exists() {
+                        self.scan_directory(project_dir, SkillSource::Project, &mut cache)
+                            .await?;
+                    }
+                }
+            }
+            SkillStorage::Backend { backend, sources } => {
+                self.scan_backend_sources(backend, sources, &mut cache)
                     .await?;
             }
         }
@@ -128,6 +142,55 @@ impl SkillLoader {
                                 warn!("Failed to parse skill {:?}: {}", skill_file, e);
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn scan_backend_sources(
+        &self,
+        backend: &Arc<dyn Backend>,
+        sources: &[String],
+        cache: &mut HashMap<String, (SkillMetadata, PathBuf, SkillSource)>,
+    ) -> Result<(), MiddlewareError> {
+        for source in sources {
+            let entries = match backend.ls(source).await {
+                Ok(entries) => entries,
+                Err(e) => {
+                    warn!("Failed to list backend source {}: {}", source, e);
+                    continue;
+                }
+            };
+
+            for entry in entries {
+                if !entry.is_dir {
+                    continue;
+                }
+
+                let skill_file = format!("{}/SKILL.md", entry.path.trim_end_matches('/'));
+                match backend.read_plain(&skill_file).await {
+                    Ok(content) => match parse_frontmatter(&content) {
+                        Ok(skill_meta) => {
+                            debug!(
+                                "Loaded skill metadata: {} from {} ({})",
+                                skill_meta.name,
+                                skill_file,
+                                SkillSource::Backend.as_str()
+                            );
+                            cache.insert(
+                                skill_meta.name.clone(),
+                                (skill_meta, PathBuf::from(&skill_file), SkillSource::Backend),
+                            );
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse skill {}: {}", skill_file, e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read skill {}: {}", skill_file, e);
                     }
                 }
             }
@@ -191,10 +254,18 @@ impl SkillLoader {
             }
         };
 
-        // Load and parse full content
-        let raw_content = tokio::fs::read_to_string(&path)
-            .await
-            .map_err(|e| MiddlewareError::ToolExecution(format!("Failed to read skill: {}", e)))?;
+        let raw_content = match &self.storage {
+            SkillStorage::Filesystem { .. } => tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| MiddlewareError::ToolExecution(format!("Failed to read skill: {}", e)))?,
+            SkillStorage::Backend { backend, .. } => {
+                let path_str = path.to_string_lossy();
+                backend
+                    .read_plain(&path_str)
+                    .await
+                    .map_err(|e| MiddlewareError::ToolExecution(format!("Failed to read skill: {}", e)))?
+            }
+        };
 
         let body = parse_body(&raw_content);
         let content = SkillContent::new(metadata, body, path.to_string_lossy().to_string());
@@ -304,6 +375,7 @@ fn parse_body(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::{Backend, MemoryBackend};
 
     #[test]
     fn test_parse_frontmatter_valid() {
@@ -466,5 +538,70 @@ This is the test skill body.
         // Test skill not found
         let result = loader.load_skill("nonexistent").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_backend_loader_layering() {
+        let backend: Arc<dyn Backend> = Arc::new(MemoryBackend::new());
+
+        backend
+            .write(
+                "/source-a/shared/SKILL.md",
+                r#"---
+name: shared
+description: First description
+---
+# Shared Skill
+
+First body.
+"#,
+            )
+            .await
+            .unwrap();
+
+        backend
+            .write(
+                "/source-b/shared/SKILL.md",
+                r#"---
+name: shared
+description: Second description
+---
+# Shared Skill
+
+Second body.
+"#,
+            )
+            .await
+            .unwrap();
+
+        backend
+            .write(
+                "/source-b/unique/SKILL.md",
+                r#"---
+name: unique
+description: Unique description
+---
+# Unique Skill
+
+Unique body.
+"#,
+            )
+            .await
+            .unwrap();
+
+        let loader = SkillLoader::from_backend(
+            Arc::clone(&backend),
+            vec!["/source-a".to_string(), "/source-b".to_string()],
+        );
+        loader.initialize().await.unwrap();
+
+        let metadata = loader.get_metadata("shared").await.unwrap();
+        assert_eq!(metadata.description, "Second description");
+
+        let content = loader.load_skill("shared").await.unwrap();
+        assert!(content.body.contains("Second body"));
+
+        let unique = loader.get_metadata("unique").await.unwrap();
+        assert_eq!(unique.description, "Unique description");
     }
 }

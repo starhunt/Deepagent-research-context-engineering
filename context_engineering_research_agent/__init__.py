@@ -37,7 +37,7 @@
 ## 모듈 구조
 
 ```
-context-engineering-more-deep_research_agent/
+context_engineering_research_agent/
 ├── __init__.py                 # 이 파일
 ├── agent.py                    # 메인 에이전트 (5가지 전략 통합)
 ├── prompts.py                  # 시스템 프롬프트
@@ -65,9 +65,10 @@ context-engineering-more-deep_research_agent/
 ## 사용 예시
 
 ```python
-from context_engineering_research_agent import agent
+from context_engineering_research_agent import get_agent
 
-# 에이전트 실행
+# 에이전트 실행 (API key 필요)
+agent = get_agent()
 result = agent.invoke({
     "messages": [{"role": "user", "content": "Context Engineering 전략 연구"}]
 })
@@ -80,16 +81,14 @@ result = agent.invoke({
 - LangGraph: https://docs.langchain.com/oss/python/langgraph/overview
 """
 
-# 버전 정보
 __version__ = "0.1.0"
 __author__ = "Context Engineering Research Team"
 
-# 주요 컴포넌트 export
-from context_engineering_more_deep_research_agent.agent import (
-    agent,
+from context_engineering_research_agent.agent import (
     create_context_aware_agent,
+    get_agent,
 )
-from context_engineering_more_deep_research_agent.context_strategies import (
+from context_engineering_research_agent.context_strategies import (
     ContextCachingStrategy,
     ContextIsolationStrategy,
     ContextOffloadingStrategy,
@@ -98,10 +97,8 @@ from context_engineering_more_deep_research_agent.context_strategies import (
 )
 
 __all__ = [
-    # 에이전트
-    "agent",
+    "get_agent",
     "create_context_aware_agent",
-    # Context Engineering 전략
     "ContextOffloadingStrategy",
     "ContextReductionStrategy",
     "ContextRetrievalStrategy",

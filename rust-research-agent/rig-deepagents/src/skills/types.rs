@@ -93,6 +93,7 @@ pub enum SkillSource {
     User,
     /// Project-level skills (PROJECT_ROOT/skills/)
     Project,
+    Backend,
 }
 
 impl SkillSource {
@@ -101,6 +102,7 @@ impl SkillSource {
         match self {
             Self::User => "user",
             Self::Project => "project",
+            Self::Backend => "backend",
         }
     }
 }
@@ -186,5 +188,6 @@ description: Minimal skill
     fn test_skill_source() {
         assert_eq!(SkillSource::User.as_str(), "user");
         assert_eq!(SkillSource::Project.as_str(), "project");
+        assert_eq!(SkillSource::Backend.as_str(), "backend");
     }
 }

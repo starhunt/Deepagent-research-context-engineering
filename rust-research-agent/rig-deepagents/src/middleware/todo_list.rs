@@ -7,7 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::middleware::{AgentMiddleware, DynTool};
-use crate::tools::WriteTodosTool;
+use crate::tools::{ReadTodosTool, WriteTodosTool};
 
 /// Default system prompt for todo planning.
 pub const TODO_SYSTEM_PROMPT: &str = "## Planning with `write_todos`\n\
@@ -17,7 +17,7 @@ Update the list as you work: mark items in_progress before starting and complete
 
 /// Middleware that injects the write_todos tool and planning guidance.
 pub struct TodoListMiddleware {
-    tool: DynTool,
+    tools: Vec<DynTool>,
     system_prompt: String,
 }
 
@@ -30,7 +30,7 @@ impl TodoListMiddleware {
     /// Create a TodoListMiddleware with a custom system prompt.
     pub fn with_system_prompt(prompt: impl Into<String>) -> Self {
         Self {
-            tool: Arc::new(WriteTodosTool),
+            tools: vec![Arc::new(ReadTodosTool), Arc::new(WriteTodosTool)],
             system_prompt: prompt.into(),
         }
     }
@@ -43,7 +43,7 @@ impl AgentMiddleware for TodoListMiddleware {
     }
 
     fn tools(&self) -> Vec<DynTool> {
-        vec![self.tool.clone()]
+        self.tools.clone()
     }
 
     fn modify_system_prompt(&self, prompt: String) -> String {
@@ -63,8 +63,9 @@ mod tests {
     fn test_todo_list_injects_tool() {
         let middleware = TodoListMiddleware::new();
         let tools = middleware.tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].definition().name, "write_todos");
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].definition().name, "read_todos");
+        assert_eq!(tools[1].definition().name, "write_todos");
     }
 
     #[test]

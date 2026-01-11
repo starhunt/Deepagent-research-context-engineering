@@ -70,6 +70,11 @@ pub trait Backend: Send + Sync {
     /// Returns: 라인 번호 포함된 포맷 (cat -n 스타일)
     async fn read(&self, path: &str, offset: usize, limit: usize) -> Result<String, BackendError>;
 
+    async fn read_plain(&self, path: &str) -> Result<String, BackendError> {
+        let formatted = self.read(path, 0, 50_000).await?;
+        Ok(strip_cat_n(&formatted))
+    }
+
     /// 파일 쓰기 (새 파일 생성)
     /// Python: write(file_path: str, content: str) -> WriteResult
     async fn write(&self, path: &str, content: &str) -> Result<WriteResult, BackendError>;
@@ -121,4 +126,12 @@ pub trait Backend: Send + Sync {
 
     /// 파일 삭제
     async fn delete(&self, path: &str) -> Result<(), BackendError>;
+}
+
+fn strip_cat_n(formatted: &str) -> String {
+    formatted
+        .lines()
+        .map(|line| line.split_once('\t').map(|(_, s)| s).unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

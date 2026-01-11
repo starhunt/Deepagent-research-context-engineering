@@ -466,7 +466,7 @@ pub trait AgentMiddleware: Send + Sync {
     async fn before_model(
         &self,
         _request: &mut ModelRequest,
-        _state: &AgentState,
+        _state: &mut AgentState,
         _runtime: &ToolRuntime,
     ) -> Result<ModelControl, MiddlewareError> {
         Ok(ModelControl::Continue)

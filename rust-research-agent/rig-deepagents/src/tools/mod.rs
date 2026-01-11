@@ -17,6 +17,7 @@ mod edit_file;
 mod ls;
 mod glob;
 mod grep;
+mod read_todos;
 mod write_todos;
 mod task;
 
@@ -30,6 +31,7 @@ pub use edit_file::EditFileTool;
 pub use ls::LsTool;
 pub use glob::GlobTool;
 pub use grep::GrepTool;
+pub use read_todos::ReadTodosTool;
 pub use write_todos::WriteTodosTool;
 pub use task::TaskTool;
 
@@ -49,6 +51,7 @@ pub fn default_tools() -> Vec<DynTool> {
         Arc::new(LsTool),
         Arc::new(GlobTool),
         Arc::new(GrepTool),
+        Arc::new(ReadTodosTool),
         Arc::new(WriteTodosTool),
     ]
 }

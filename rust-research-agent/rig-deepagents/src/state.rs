@@ -105,15 +105,29 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 impl Message {
     pub fn user(content: &str) -> Self {
-        Self { role: Role::User, content: content.to_string(), tool_call_id: None, tool_calls: None }
+        Self {
+            role: Role::User,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: None,
+            status: None,
+        }
     }
 
     pub fn assistant(content: &str) -> Self {
-        Self { role: Role::Assistant, content: content.to_string(), tool_call_id: None, tool_calls: None }
+        Self {
+            role: Role::Assistant,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: None,
+            status: None,
+        }
     }
 
     pub fn assistant_with_tool_calls(content: &str, tool_calls: Vec<ToolCall>) -> Self {
@@ -121,12 +135,19 @@ impl Message {
             role: Role::Assistant,
             content: content.to_string(),
             tool_call_id: None,
-            tool_calls: Some(tool_calls)
+            tool_calls: Some(tool_calls),
+            status: None,
         }
     }
 
     pub fn system(content: &str) -> Self {
-        Self { role: Role::System, content: content.to_string(), tool_call_id: None, tool_calls: None }
+        Self {
+            role: Role::System,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: None,
+            status: None,
+        }
     }
 
     pub fn tool(content: &str, tool_call_id: &str) -> Self {
@@ -135,6 +156,17 @@ impl Message {
             content: content.to_string(),
             tool_call_id: Some(tool_call_id.to_string()),
             tool_calls: None,
+            status: None,
+        }
+    }
+
+    pub fn tool_with_status(content: &str, tool_call_id: &str, status: &str) -> Self {
+        Self {
+            role: Role::Tool,
+            content: content.to_string(),
+            tool_call_id: Some(tool_call_id.to_string()),
+            tool_calls: None,
+            status: Some(status.to_string()),
         }
     }
 

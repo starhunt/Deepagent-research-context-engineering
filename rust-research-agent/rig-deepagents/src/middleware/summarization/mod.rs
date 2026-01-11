@@ -53,9 +53,10 @@ use tracing::{debug, info, warn};
 
 use crate::error::MiddlewareError;
 use crate::llm::LLMProvider;
-use crate::middleware::traits::{AgentMiddleware, DynTool, StateUpdate};
+use crate::middleware::traits::{AgentMiddleware, DynTool, ModelControl, ModelRequest};
 use crate::runtime::ToolRuntime;
 use crate::state::{AgentState, Message, Role};
+use crate::tokenization::{ApproxTokenCounter, TokenCounter};
 
 /// Summarization Middleware for token budget management.
 ///
@@ -67,6 +68,7 @@ pub struct SummarizationMiddleware {
     llm_provider: Arc<dyn LLMProvider>,
     /// Configuration
     config: SummarizationConfig,
+    token_counter: Arc<dyn TokenCounter>,
 }
 
 impl SummarizationMiddleware {
@@ -77,7 +79,27 @@ impl SummarizationMiddleware {
     /// * `llm_provider` - LLM provider for generating summaries
     /// * `config` - Configuration for triggers, keep size, and prompts
     pub fn new(llm_provider: Arc<dyn LLMProvider>, config: SummarizationConfig) -> Self {
-        Self { llm_provider, config }
+        let token_counter = Arc::new(ApproxTokenCounter::new(
+            config.chars_per_token,
+            config.overhead_per_message as usize,
+        ));
+        Self {
+            llm_provider,
+            config,
+            token_counter,
+        }
+    }
+
+    pub fn with_token_counter(
+        llm_provider: Arc<dyn LLMProvider>,
+        config: SummarizationConfig,
+        token_counter: Arc<dyn TokenCounter>,
+    ) -> Self {
+        Self {
+            llm_provider,
+            config,
+            token_counter,
+        }
     }
 
     /// Create with default configuration.
@@ -92,11 +114,7 @@ impl SummarizationMiddleware {
 
     /// Count tokens in the current messages.
     fn count_tokens(&self, messages: &[Message]) -> usize {
-        count_tokens_approximately(
-            messages,
-            self.config.chars_per_token,
-            self.config.overhead_per_message,
-        )
+        self.token_counter.count_messages(messages)
     }
 
     /// Check if summarization should be triggered.
@@ -152,11 +170,7 @@ impl SummarizationMiddleware {
         let mut count = 0;
 
         for msg in messages.iter().rev() {
-            let msg_tokens = count_tokens_approximately(
-                std::slice::from_ref(msg),
-                self.config.chars_per_token,
-                self.config.overhead_per_message,
-            );
+            let msg_tokens = self.token_counter.count_message(msg);
 
             if total_tokens + msg_tokens > token_budget {
                 break;
@@ -180,9 +194,8 @@ impl SummarizationMiddleware {
 
         let mut cutoff = initial_cutoff;
 
-        // Advance past Tool messages (they should stay with their AI message)
-        while cutoff < messages.len() && messages[cutoff].role == Role::Tool {
-            cutoff += 1;
+        while cutoff > 0 && messages[cutoff].role == Role::Tool {
+            cutoff -= 1;
         }
 
         cutoff
@@ -233,11 +246,7 @@ impl SummarizationMiddleware {
 
         // Take messages from the end (most recent first), respecting token budget
         for msg in messages.iter().rev() {
-            let msg_tokens = count_tokens_approximately(
-                std::slice::from_ref(msg),
-                self.config.chars_per_token,
-                self.config.overhead_per_message,
-            );
+            let msg_tokens = self.token_counter.count_message(msg);
 
             if total_tokens + msg_tokens > max_tokens {
                 break;
@@ -297,11 +306,12 @@ impl AgentMiddleware for SummarizationMiddleware {
         prompt
     }
 
-    async fn after_agent(
+    async fn before_model(
         &self,
+        request: &mut ModelRequest,
         state: &mut AgentState,
         _runtime: &ToolRuntime,
-    ) -> Result<Option<StateUpdate>, MiddlewareError> {
+    ) -> Result<ModelControl, MiddlewareError> {
         let token_count = self.count_tokens(&state.messages);
         let message_count = state.messages.len();
 
@@ -314,7 +324,7 @@ impl AgentMiddleware for SummarizationMiddleware {
 
         // Check if we should summarize
         if !self.should_summarize(token_count, message_count) {
-            return Ok(None);
+            return Ok(ModelControl::Continue);
         }
 
         info!(
@@ -328,7 +338,7 @@ impl AgentMiddleware for SummarizationMiddleware {
 
         if to_summarize.is_empty() {
             debug!("No messages to summarize");
-            return Ok(None);
+            return Ok(ModelControl::Continue);
         }
 
         debug!(
@@ -342,7 +352,7 @@ impl AgentMiddleware for SummarizationMiddleware {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to generate summary, keeping original messages");
-                return Ok(None);
+                return Ok(ModelControl::Continue);
             }
         };
 
@@ -362,7 +372,10 @@ impl AgentMiddleware for SummarizationMiddleware {
             "Summarization complete"
         );
 
-        Ok(Some(StateUpdate::SetMessages(new_messages)))
+        state.messages = new_messages.clone();
+        request.messages = new_messages.clone();
+
+        Ok(ModelControl::ModifyRequest(request.clone()))
     }
 }
 
@@ -379,6 +392,8 @@ impl std::fmt::Debug for SummarizationMiddleware {
 mod tests {
     use super::*;
     use crate::llm::{LLMConfig, LLMResponse};
+    use crate::middleware::{ModelControl, ModelRequest};
+    use crate::runtime::ToolRuntime;
 
     /// Mock LLM provider for testing
     struct MockProvider {
@@ -449,10 +464,10 @@ mod tests {
     }
 
     #[test]
-    fn test_safe_cutoff_skips_tool_messages() {
+    fn test_safe_cutoff_moves_backward_for_tool_messages() {
         let provider = Arc::new(MockProvider::new("Summary"));
         let config = SummarizationConfig::builder()
-            .keep(KeepSize::Messages(2))
+            .keep(KeepSize::Messages(3))
             .build();
         let middleware = SummarizationMiddleware::new(provider, config);
 
@@ -465,31 +480,54 @@ mod tests {
                     arguments: serde_json::json!({"path": "/test"}),
                 }
             ]),
-            Message::tool("File contents", "call_1"),  // Tool result
+            Message::tool("File contents", "call_1"),
             Message::assistant("Here's what I found"),
             Message::user("Thanks"),
         ];
 
         let (to_summarize, preserved) = middleware.partition_messages(&messages);
 
-        // Should not split in the middle of AI/Tool pair
-        // If cutoff lands on Tool message, it advances past it
-        for msg in &to_summarize {
-            if msg.role == Role::Tool {
-                // Check there's an AI message before it in to_summarize
-                let has_ai_before = to_summarize.iter().any(|m| m.role == Role::Assistant);
-                assert!(has_ai_before, "Tool message should have AI message before it");
-            }
-        }
-
-        // Preserved messages should include the recent context
-        assert!(!preserved.is_empty(), "Should have preserved messages");
-        // Combined should equal original
+        assert_eq!(to_summarize.len(), 1);
+        assert_eq!(preserved.len(), 4);
+        assert!(preserved[0].tool_calls.is_some());
         assert_eq!(
             to_summarize.len() + preserved.len(),
             messages.len(),
             "Partition should not lose any messages"
         );
+    }
+
+    #[tokio::test]
+    async fn test_before_model_summarizes_request_messages() {
+        let provider = Arc::new(MockProvider::new("Summary text"));
+        let config = SummarizationConfig::builder()
+            .trigger(TriggerCondition::Messages(2))
+            .keep(KeepSize::Messages(1))
+            .build();
+        let middleware = SummarizationMiddleware::new(provider, config);
+
+        let mut state = AgentState::with_messages(vec![
+            Message::user("First"),
+            Message::assistant("Second"),
+            Message::user("Third"),
+        ]);
+
+        let mut request = ModelRequest::new(state.messages.clone(), vec![]);
+        let backend = Arc::new(crate::backends::MemoryBackend::new());
+        let runtime = ToolRuntime::new(state.clone(), backend);
+
+        let control = middleware
+            .before_model(&mut request, &mut state, &runtime)
+            .await
+            .unwrap();
+
+        assert!(matches!(control, ModelControl::ModifyRequest(_)));
+        assert_eq!(request.messages.len(), state.messages.len());
+        assert_eq!(request.messages[0].role, state.messages[0].role);
+        assert_eq!(request.messages[0].content, state.messages[0].content);
+        assert_eq!(request.messages[1].content, state.messages[1].content);
+        assert_eq!(state.messages.len(), 2);
+        assert!(state.messages[0].content.contains("Summary text"));
     }
 
     #[test]

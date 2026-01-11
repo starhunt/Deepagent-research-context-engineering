@@ -110,7 +110,7 @@ impl MiddlewareStack {
     pub async fn before_model(
         &self,
         request: &mut ModelRequest,
-        state: &AgentState,
+        state: &mut AgentState,
         runtime: &ToolRuntime,
     ) -> Result<ModelControl, MiddlewareError> {
         for middleware in &self.middlewares {
